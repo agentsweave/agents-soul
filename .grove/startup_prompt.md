@@ -1,0 +1,1 @@
+$flywheel-swarm Remember always format,test, commit, push when completed per beads task  or a big feature 
