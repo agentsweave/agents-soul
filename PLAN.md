@@ -1971,6 +1971,8 @@ pub struct ProvenanceReport {
 pub enum SoulError {
     #[error("invalid soul config: {0}")]
     InvalidConfig(String),
+    #[error("required upstream inputs are broken")]
+    RequiredInputsBroken,
     #[error("identity input unavailable")]
     IdentityUnavailable,
     #[error("registry verification unavailable")]
@@ -2566,271 +2568,264 @@ pub async fn soul_compose_context(
 
 ---
 
-## 37. Scenario Ledger
+## 37. Soul Boundary Contract
 
-Each line is a scenario the implementation must handle.
+This section defines the exact job of `agents-soul` at session start in code terms.
+It exists to prevent architectural drift into auth, identity, or registry authority.
 
-- `SOUL-S001`: active identity + active registry + good reputation -> normal direct profile.
-- `SOUL-S002`: active identity + active registry + no reputation -> omit reputation nuance.
-- `SOUL-S003`: active identity + suspended registry -> restricted initiative.
-- `SOUL-S004`: active identity + revoked registry -> fail-closed prefix.
-- `SOUL-S005`: degraded identity + active registry -> lower risk tolerance.
-- `SOUL-S006`: broken identity + active registry -> no normal context.
-- `SOUL-S007`: healthy identity + registry unavailable + offline policy cautious -> degraded cautious output.
-- `SOUL-S008`: healthy identity + registry unavailable + offline policy fail-closed -> no normal context.
-- `SOUL-S009`: relationship marker trusted-user -> slightly warmer output.
-- `SOUL-S010`: relationship marker high-friction -> increase explicitness and evidence.
-- `SOUL-S011`: one urgent commitment -> elevate execution focus.
-- `SOUL-S012`: many commitments -> mention prioritization discipline.
-- `SOUL-S013`: preference concise answers -> reduce paragraph budget.
-- `SOUL-S014`: preference deep analysis -> increase explanation depth.
-- `SOUL-S015`: low recent reputation -> add self-check rule.
-- `SOUL-S016`: excellent recent reputation -> maintain confidence but not arrogance.
-- `SOUL-S017`: adaptation suggests less risk -> clamp to max drift.
-- `SOUL-S018`: adaptation suggests more warmth -> clamp to max drift.
-- `SOUL-S019`: explicit operator config conflicts with adaptation -> operator config wins.
-- `SOUL-S020`: explain mode -> return provenance-heavy payload.
-- `SOUL-S021`: prefix-only mode -> omit bulky sections.
-- `SOUL-S022`: debug mode -> include derivation notes.
-- `SOUL-S023`: identity input from file snapshot -> normalize.
-- `SOUL-S024`: identity input from REST -> normalize.
-- `SOUL-S025`: identity input from MCP -> normalize.
-- `SOUL-S026`: registry input from REST -> normalize.
-- `SOUL-S027`: registry input from MCP -> normalize.
-- `SOUL-S028`: missing relationship markers -> empty section, no error.
-- `SOUL-S029`: missing commitments -> empty section, no error.
-- `SOUL-S030`: malformed optional reputation payload -> warning, no crash.
-- `SOUL-S031`: malformed config -> validation error.
-- `SOUL-S032`: unknown heuristic trigger -> keep disabled and warn.
-- `SOUL-S033`: duplicate heuristic id -> config error.
-- `SOUL-S034`: interaction event positive cooperation -> small warmth increase.
-- `SOUL-S035`: interaction event correction-needed -> small conscientiousness increase.
-- `SOUL-S036`: interaction event overreach -> lower initiative.
-- `SOUL-S037`: interaction event under-communication -> raise verbosity slightly.
-- `SOUL-S038`: interaction event user-frustration -> increase explicit uncertainty style.
-- `SOUL-S039`: interaction event success streak -> mild confidence uplift only within bounds.
-- `SOUL-S040`: reset adaptations -> baseline restored.
-- `SOUL-S041`: config comments untouched when no write occurs.
-- `SOUL-S042`: traits patch with persist=false -> session-only projection.
-- `SOUL-S043`: traits patch with persist=true -> update config file or overlay file by policy.
-- `SOUL-S044`: revoked status plus high reputation -> still fail-closed.
-- `SOUL-S045`: suspended status plus excellent reputation -> restricted mode remains.
-- `SOUL-S046`: retired status -> historical/readonly guidance.
-- `SOUL-S047`: pending status -> probationary tone.
-- `SOUL-S048`: healthy inputs + no adaptation -> pure baseline render.
-- `SOUL-S049`: adaptation store missing -> degrade without crash.
-- `SOUL-S050`: template missing -> clear error.
-- `SOUL-S051`: prefix too large -> truncate safely.
-- `SOUL-S052`: context too large -> shrink optional sections first.
-- `SOUL-S053`: warning-heavy context -> warnings appear before aggressive heuristics.
-- `SOUL-S054`: unknown registry standing -> caution note.
-- `SOUL-S055`: negative relationship marker -> extra evidence-oriented explanations.
-- `SOUL-S056`: strong trusted relationship -> slightly fewer caveats.
-- `SOUL-S057`: formal user preference -> raise formality.
-- `SOUL-S058`: casual user preference -> lower formality within bounds.
-- `SOUL-S059`: system prompt prefix regeneration with same inputs -> byte-identical output.
-- `SOUL-S060`: explain output with same inputs -> deterministic output.
-- `SOUL-S061`: many heuristics -> stable sort by priority then id.
-- `SOUL-S062`: disabled heuristic -> excluded from final rules.
-- `SOUL-S063`: duplicate commitments from identity -> dedupe by id.
-- `SOUL-S064`: stale registry verify timestamp -> warn.
-- `SOUL-S065`: old reputation snapshot -> warn.
-- `SOUL-S066`: no identity fingerprint in provenance -> allowed when input absent.
-- `SOUL-S067`: extremely verbose baseline + concise user preference -> layered compromise.
-- `SOUL-S068`: extremely direct baseline + high-friction relationship -> soften edge slightly.
-- `SOUL-S069`: low risk tolerance + urgent commitment -> act carefully but still prioritize.
-- `SOUL-S070`: broken identity + offline registry -> hard failure path.
-- `SOUL-S071`: multiple adaptation notes -> render in deterministic order.
-- `SOUL-S072`: compose after reset -> adaptation notes disappear.
-- `SOUL-S073`: inspect traits -> baseline and effective values both visible.
-- `SOUL-S074`: inspect heuristics -> enabled and disabled shown separately.
-- `SOUL-S075`: explain one rule -> show direct provenance chain.
-- `SOUL-S076`: explain commitment emphasis -> cite identity commitment input.
-- `SOUL-S077`: explain confidence reduction -> cite reputation or status input.
-- `SOUL-S078`: unknown config version -> migration or clear error.
-- `SOUL-S079`: config missing optional template path -> use default template.
-- `SOUL-S080`: config missing required limits -> validation error.
-- `SOUL-S081`: interaction event duplicated -> idempotent handling.
-- `SOUL-S082`: adaptation DB corruption -> degrade and surface repair note.
-- `SOUL-S083`: registry mismatch reason -> warn and lower confidence.
-- `SOUL-S084`: identity warning list non-empty -> include in context warnings.
-- `SOUL-S085`: prompt-prefix mode when revoked -> one short fail-closed block only.
-- `SOUL-S086`: high warmth + high directness -> frank but respectful tone.
-- `SOUL-S087`: low warmth + high conscientiousness -> precise and austere tone.
-- `SOUL-S088`: high openness + low verbosity -> creative but compact.
-- `SOUL-S089`: low openness + high formality -> conservative official tone.
-- `SOUL-S090`: high initiative + suspended status -> initiative clamped down.
-- `SOUL-S091`: high initiative + active status + many commitments -> focus before expansion.
-- `SOUL-S092`: unknown reputation category -> ignore category-specific effect.
-- `SOUL-S093`: no heuristics configured -> minimum safe defaults.
-- `SOUL-S094`: empty config file -> fail validation.
-- `SOUL-S095`: empty interaction DB -> baseline only.
-- `SOUL-S096`: stale cache hit -> ignored in favor of fresh input when available.
-- `SOUL-S097`: context render includes duplicate warning -> dedupe.
-- `SOUL-S098`: huge relationship list -> top-N render plus summary count.
-- `SOUL-S099`: huge commitment list -> priority sort and truncate.
-- `SOUL-S100`: huge facts list -> use only behavior-relevant facts.
+### 37.1 What soul owns vs what it reads
 
-### 37.1 Extended scenario ledger
+| Concern | Owner | Soul role |
+|---|---|---|
+| agent legal identity | `agents-registry` | read-only consumer |
+| local identity continuity | `agents-identify` | read-only consumer |
+| session principal binding | caller / runtime / `agents-auth` | trust supplied `agent_id`, never mint or verify |
+| personality baseline | `agents-soul` | authoritative owner |
+| behavioral adaptation | `agents-soul` | authoritative owner within bounded drift |
+| standing restrictions | `agents-registry` | must honor, never override |
+| locks / leases / coordination | `agents-identify` or orchestration layer | may render warnings, never own the lock |
 
-- `SOUL-S101`: behavior must not claim authority over registry.
-- `SOUL-S102`: behavior must not claim authority over identity repair.
-- `SOUL-S103`: compose should succeed without UI present.
-- `SOUL-S104`: compose should succeed without REST server if CLI input provided.
-- `SOUL-S105`: MCP tool returns same payload as CLI JSON.
-- `SOUL-S106`: REST returns same payload as CLI JSON.
-- `SOUL-S107`: negative standing adds self-check heuristics.
-- `SOUL-S108`: excellent standing must not erase uncertainty guidance.
-- `SOUL-S109`: commitment marked blocked renders unblock-seeking behavior.
-- `SOUL-S110`: commitment marked due-soon renders urgency hint.
-- `SOUL-S111`: preference key unknown to soul -> ignore unless mapped.
-- `SOUL-S112`: relationship marker teammate -> increase collaborative language.
-- `SOUL-S113`: relationship marker adversarial -> increase documentation discipline.
-- `SOUL-S114`: directness clamp upper bound never exceeds 1.0.
-- `SOUL-S115`: directness clamp lower bound never below 0.0.
-- `SOUL-S116`: warmth clamp upper bound never exceeds 1.0.
-- `SOUL-S117`: risk_tolerance clamp lower bound never below 0.0.
-- `SOUL-S118`: risk_tolerance clamp upper bound never exceeds 1.0.
-- `SOUL-S119`: formality clamp behaves deterministically.
-- `SOUL-S120`: profile hash changes when config changes.
-- `SOUL-S121`: profile hash unchanged when irrelevant whitespace changes by parser normalization.
-- `SOUL-S122`: explain payload cites baseline trait values.
-- `SOUL-S123`: explain payload cites adaptive override values.
-- `SOUL-S124`: explain payload cites warning sources.
-- `SOUL-S125`: adaptation note wording is operator-readable.
-- `SOUL-S126`: revoked path suppresses normal collaboration encouragement.
-- `SOUL-S127`: suspended path keeps politeness but lowers autonomy.
-- `SOUL-S128`: pending path requests confirmation for higher-risk actions.
-- `SOUL-S129`: retired path discourages new commitments.
-- `SOUL-S130`: low-reputation path encourages extra verification of outputs.
-- `SOUL-S131`: high-friction relationship path reduces sarcasm risk to zero.
-- `SOUL-S132`: concise preference plus debug mode still exposes full derivation in JSON.
-- `SOUL-S133`: prompt prefix stays ASCII unless source data requires otherwise.
-- `SOUL-S134`: template render escapes user-supplied strings safely.
-- `SOUL-S135`: TOML parser preserves numeric precision enough for stable clamping.
-- `SOUL-S136`: same interaction event imported twice does not double-apply.
-- `SOUL-S137`: adaptation reset writes audit entry in local DB.
-- `SOUL-S138`: heuristic order remains stable across runs.
-- `SOUL-S139`: context warnings list sorted by severity.
-- `SOUL-S140`: provenance hashes computed after normalization not before.
-- `SOUL-S141`: behavior output includes agent id always.
-- `SOUL-S142`: behavior output includes profile name always.
-- `SOUL-S143`: missing profile name falls back to agent id with warning.
-- `SOUL-S144`: missing trait baseline is fatal config error.
-- `SOUL-S145`: missing limits section is fatal config error.
-- `SOUL-S146`: missing template config uses built-in defaults.
-- `SOUL-S147`: inspect command can read without registry connectivity.
-- `SOUL-S148`: explain command can work with cached normalization bundle.
-- `SOUL-S149`: registry reader timeout is surfaced as degraded, not panic.
-- `SOUL-S150`: identity reader timeout is surfaced as degraded, not panic.
+### 37.2 Session-start input contract
+
+`agents-soul` receives a request for exactly one agent in exactly one session.
+It does not discover the principal by itself. The caller already knows which agent
+session is being composed.
+
+```rust
+pub struct ComposeRequest {
+    pub workspace_id: String,
+    pub agent_id: String,
+    pub session_id: String,
+    pub include_reputation: bool,
+    pub include_relationships: bool,
+    pub include_commitments: bool,
+    pub explain: bool,
+}
+
+pub struct SoulInputBundle {
+    pub baseline: SoulConfig,
+    pub identify: Option<IdentifySnapshot>,
+    pub registry: Option<RegistrySnapshot>,
+    pub adaptation: AdaptiveState,
+}
+
+pub struct IdentifySnapshot {
+    pub state: IdentifyState,
+    pub commitments: Vec<CommitmentRecord>,
+    pub preferences: PreferenceSet,
+    pub relationships: Vec<RelationshipMarker>,
+}
+
+pub struct RegistrySnapshot {
+    pub standing: RegistryStanding,
+    pub reputation: Option<ReputationSummary>,
+    pub recovery: Option<RecoveryState>,
+}
+```
+
+### 37.3 Compose mode resolver
+
+The first job of soul is not "render a prompt". The first job is to decide which
+behavioral mode is legal for the current upstream state.
+
+```rust
+pub enum ComposeMode {
+    Normal,
+    Restricted,
+    Degraded,
+    BaselineOnly,
+    FailClosed,
+}
+
+pub fn resolve_compose_mode(inputs: &SoulInputBundle) -> Result<ComposeMode, SoulError> {
+    match inputs.registry.as_ref().map(|r| &r.standing) {
+        Some(RegistryStanding::Revoked) => Ok(ComposeMode::FailClosed),
+        Some(RegistryStanding::Suspended) => Ok(ComposeMode::Restricted),
+        Some(RegistryStanding::Active) => match inputs.identify.as_ref().map(|i| &i.state) {
+            Some(IdentifyState::Healthy) => Ok(ComposeMode::Normal),
+            Some(IdentifyState::Degraded) => Ok(ComposeMode::Degraded),
+            Some(IdentifyState::Broken) => Err(SoulError::RequiredInputsBroken),
+            None => Ok(ComposeMode::BaselineOnly),
+        },
+        None => Ok(ComposeMode::Degraded),
+    }
+}
+```
+
+### 37.4 Mode-to-behavior contract
+
+| Mode | Allowed output | Forbidden behavior |
+|---|---|---|
+| `Normal` | full trait shaping, commitments, relationships, reputation-sensitive heuristics | claiming registry authority |
+| `Restricted` | full context with lower initiative and explicit confirmation rules | autonomous high-risk action framing |
+| `Degraded` | baseline plus partial upstream truth and visible warnings | inventing missing reputation or standing |
+| `BaselineOnly` | baseline personality plus static config and warnings | pretending identity-derived context exists |
+| `FailClosed` | warning-first prefix and operator-escalation guidance | normal operation prompt |
+
+### 37.5 Session-start pipeline
+
+```rust
+pub async fn compose_context(
+    deps: &AppDeps,
+    req: ComposeRequest,
+) -> Result<BehavioralContext, SoulError> {
+    let baseline = deps.config_repo.load(&req.workspace_id).await?;
+    let identify = deps.identify_reader.read(&req.agent_id).await.ok();
+    let registry = deps.registry_reader.verify(&req.agent_id).await.ok();
+    let adaptation = deps.adaptation_store.load_effective(&req.agent_id).await?;
+
+    let inputs = normalize_inputs(baseline, identify, registry, adaptation)?;
+    let mode = resolve_compose_mode(&inputs)?;
+
+    let trait_profile = derive_effective_profile(&inputs, mode)?;
+    let communication_rules = derive_communication_rules(&inputs, &trait_profile, mode);
+    let decision_rules = derive_decision_rules(&inputs, &trait_profile, mode);
+    let warnings = derive_warnings(&inputs, mode);
+    let prefix = render_prefix(&req.agent_id, &trait_profile, &decision_rules, &warnings, mode)?;
+
+    Ok(build_behavioral_context(
+        req,
+        inputs,
+        mode,
+        trait_profile,
+        communication_rules,
+        decision_rules,
+        warnings,
+        prefix,
+    ))
+}
+```
+
+### 37.6 Concrete shaping rules
+
+| Input source | Example signal | Required soul effect |
+|---|---|---|
+| identify commitments | deadline today | increase follow-through language and task-order discipline |
+| identify preferences | concise answers | lower verbosity and paragraph count |
+| identify relationship markers | trusted-user | slightly warmer tone, less defensive preamble |
+| identify relationship markers | high-friction | more evidence-first and more explicit uncertainty |
+| registry standing | suspended | lower initiative, add approval gate |
+| registry reputation | repeated overreach incidents | lower risk tolerance and increase self-check rules |
+| adaptation events | user repeatedly asks for more directness | bounded directness increase only within configured clamp |
+
+### 37.7 Invariants
+
+- `agents-soul` must never claim authority over registry validity.
+- `agents-soul` must never claim authority over identity repair.
+- `agents-soul` must never create or verify credentials, sessions, or tokens.
+- `agents-soul` must remain deterministic for identical normalized inputs.
+- `agents-soul` must fail closed on `revoked` standing.
+- `agents-soul` may degrade on missing inputs, but must not invent missing truth.
+- CLI, REST, and MCP must all pass through the same inner compose service.
+
+### 37.8 Failure semantics that matter
+
+- missing optional reputation must not crash compose
+- missing identify data may downgrade to `BaselineOnly`
+- malformed required config must fail fast
+- template missing must fail explicitly
+- adaptation store corruption may degrade but must not fabricate context
+- cache is disposable and must never become authority
+- registry timeout may degrade only if policy allows offline composition
+
+### 37.9 What soul must never become
+
+- not an auth server
+- not an identity registrar
+- not a token issuer
+- not a credential verifier
+- not a registry writer
+- not a lock manager
+- not a hidden policy engine that silently overrides registry standing
 
 ---
 
 ## 38. Test Case Ledger
 
-- `SOUL-T001`: parse valid `soul.toml`.
-- `SOUL-T002`: reject invalid `soul.toml`.
-- `SOUL-T003`: compose healthy full context.
-- `SOUL-T004`: compose missing identity.
-- `SOUL-T005`: compose missing registry verification.
-- `SOUL-T006`: compose missing reputation.
-- `SOUL-T007`: compose revoked registry status.
-- `SOUL-T008`: compose suspended registry status.
-- `SOUL-T009`: compose pending registry status.
-- `SOUL-T010`: compose retired registry status.
-- `SOUL-T011`: render prompt prefix from healthy context.
-- `SOUL-T012`: render prompt prefix from revoked context.
-- `SOUL-T013`: render explain payload.
-- `SOUL-T014`: trait clamp upper bounds.
-- `SOUL-T015`: trait clamp lower bounds.
-- `SOUL-T016`: adaptation reset clears overrides.
-- `SOUL-T017`: adaptation notes stable ordering.
-- `SOUL-T018`: heuristics sorted by priority.
-- `SOUL-T019`: disabled heuristics excluded.
-- `SOUL-T020`: unknown heuristic trigger handled.
-- `SOUL-T021`: relationship markers render.
-- `SOUL-T022`: commitments render.
-- `SOUL-T023`: preferences influence style.
-- `SOUL-T024`: reputation low adds caution rules.
-- `SOUL-T025`: reputation high does not over-expand output.
-- `SOUL-T026`: explain references provenance.
-- `SOUL-T027`: provenance hash stable.
-- `SOUL-T028`: compose cache hit.
-- `SOUL-T029`: compose cache miss after config change.
-- `SOUL-T030`: compose cache miss after identity change.
-- `SOUL-T031`: compose cache miss after registry change.
-- `SOUL-T032`: interaction event stored.
-- `SOUL-T033`: duplicate interaction id idempotent.
-- `SOUL-T034`: inspect traits JSON.
-- `SOUL-T035`: inspect heuristics JSON.
-- `SOUL-T036`: inspect adaptations JSON.
-- `SOUL-T037`: CLI `compose --json`.
-- `SOUL-T038`: CLI `compose --prefix-only`.
-- `SOUL-T039`: CLI `inspect --traits`.
-- `SOUL-T040`: CLI `reset`.
-- `SOUL-T041`: REST compose route.
-- `SOUL-T042`: REST traits get route.
-- `SOUL-T043`: REST traits patch route.
-- `SOUL-T044`: REST interactions route.
-- `SOUL-T045`: REST reset route.
-- `SOUL-T046`: MCP compose tool.
-- `SOUL-T047`: MCP get prefix tool.
-- `SOUL-T048`: MCP get traits tool.
-- `SOUL-T049`: MCP record interaction tool.
-- `SOUL-T050`: snapshot full context.
+This section keeps only the test clusters that actually drive implementation.
 
-### 38.1 Extended test ledger
+### 38.1 Composition tests
 
-- `SOUL-T051`: snapshot prefix context.
-- `SOUL-T052`: snapshot revoked fail-closed prefix.
-- `SOUL-T053`: snapshot suspended restricted prefix.
-- `SOUL-T054`: snapshot explain response.
-- `SOUL-T055`: registry timeout degrades compose.
-- `SOUL-T056`: identity timeout degrades compose.
-- `SOUL-T057`: cache load failure degrades compose.
-- `SOUL-T058`: adaptation DB missing recreates cleanly.
-- `SOUL-T059`: template missing returns error.
-- `SOUL-T060`: config missing limits returns error.
-- `SOUL-T061`: config missing profile name falls back with warning.
-- `SOUL-T062`: large commitment list truncates.
-- `SOUL-T063`: large relationship list truncates.
-- `SOUL-T064`: warning list deduplicates.
-- `SOUL-T065`: baseline profile unchanged by inspect.
-- `SOUL-T066`: persist=false patch does not touch disk.
-- `SOUL-T067`: persist=true patch touches disk.
-- `SOUL-T068`: manual patch overrides adaptation.
-- `SOUL-T069`: low risk tolerance with urgent commitments.
-- `SOUL-T070`: negative relationship marker increases evidence wording.
-- `SOUL-T071`: trusted relationship marker reduces boilerplate caution.
-- `SOUL-T072`: prompt prefix length cap enforced.
-- `SOUL-T073`: ASCII output default maintained.
-- `SOUL-T074`: non-ASCII source data preserved safely.
-- `SOUL-T075`: restore from fixtures round-trip.
+- healthy identity + active standing -> normal compose
+- suspended standing -> restricted compose
+- revoked standing -> fail-closed compose
+- missing registry -> degraded compose according to offline policy
+- missing identity -> omit identity-derived sections without panicking
+
+### 38.2 Determinism tests
+
+- same normalized inputs -> byte-identical prefix output
+- same normalized inputs -> byte-identical explain output
+- heuristic ordering stable by priority and identifier
+- provenance hash stable after normalization
+
+### 38.3 Adaptation tests
+
+- reset clears adaptive overrides
+- persist=false patch remains session-scoped
+- persist=true patch writes durable state
+- duplicate interaction event is idempotent
+- adaptation drift never exceeds configured bounds
+
+### 38.4 Transport parity tests
+
+- CLI `compose --json` matches REST `data`
+- CLI `compose --json` matches MCP tool result
+- inspect payload matches across CLI, REST, and MCP
+- error codes for revoked, suspended, and malformed config are transport-consistent
+
+### 38.5 Failure-path tests
+
+- registry timeout degrades instead of panicking
+- identity timeout degrades instead of panicking
+- cache load failure does not become authority
+- missing template returns explicit error
+- missing limits section returns explicit validation error
+
+### 38.6 Snapshot tests worth keeping
+
+- normal full context
+- normal prefix-only context
+- revoked fail-closed prefix
+- suspended restricted prefix
+- explain payload with provenance enabled
 
 ---
 
 ## 39. Research Ledger
 
-- `SOUL-R001`: measure prompt token cost of full context vs prefix-only.
-- `SOUL-R002`: measure user preference responsiveness after adaptation.
-- `SOUL-R003`: evaluate if reputation should change directness.
-- `SOUL-R004`: evaluate if reputation should change verbosity.
-- `SOUL-R005`: define safe defaults when all upstream inputs absent.
-- `SOUL-R006`: define exact operator mental model for explain output.
-- `SOUL-R007`: compare TOML overlays vs single-file rewrites.
-- `SOUL-R008`: compare minijinja vs handwritten renderers.
-- `SOUL-R009`: define migration path for future web UI if needed.
-- `SOUL-R010`: define strategy for context recomposition frequency.
-- `SOUL-R011`: define whether adaptive overrides should decay over time.
-- `SOUL-R012`: define whether negative reputation should decay faster than positive.
-- `SOUL-R013`: define if relationship markers should be ranked.
-- `SOUL-R014`: define how many commitments meaningfully affect persona.
-- `SOUL-R015`: validate that revoked fail-closed wording is concise enough.
-- `SOUL-R016`: validate that suspended wording still permits safe introspection.
-- `SOUL-R017`: document operator flow for manually freezing adaptation.
-- `SOUL-R018`: decide whether config comments need round-trip preservation.
-- `SOUL-R019`: decide whether provenance should include raw input refs.
-- `SOUL-R020`: decide whether to support profile inheritance in v2.
+This section should list only the research questions that can materially change
+the design later.
+
+### 39.1 Rendering strategy
+
+- compare `minijinja` with a handwritten renderer only if profiling shows
+  template overhead matters
+- measure prompt token cost of full context vs prefix-only
+
+### 39.2 Adaptation strategy
+
+- decide whether adaptive overrides should decay over time
+- decide whether negative reputation should decay faster than positive
+- decide whether manual operator freezes need first-class support
+
+### 39.3 Config and authoring strategy
+
+- compare TOML overlays vs single-file rewrites
+- decide whether comment round-trip preservation is worth the complexity
+- decide whether profile inheritance belongs in v2
+
+### 39.4 Operator explainability
+
+- refine the operator mental model for explain output
+- decide whether provenance should include raw input references or only normalized
+  references
+
+### 39.5 Behavioral tuning
+
+- validate safe defaults when upstream inputs are largely absent
+- validate whether reputation should materially affect directness and verbosity
+- validate how many commitments should influence persona before truncation
 
 ---
 
@@ -3470,10 +3465,12 @@ A reviewer should be able to answer:
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComposeRequest {
+    pub workspace_id: String,
     pub agent_id: String,
-    pub mode: ComposeMode,
-    pub identity_source: Option<InputSource>,
-    pub registry_source: Option<InputSource>,
+    pub session_id: String,
+    pub include_reputation: bool,
+    pub include_relationships: bool,
+    pub include_commitments: bool,
 }
 
 pub struct ComposeService {
@@ -3489,7 +3486,7 @@ impl ComposeService {
         &self,
         req: ComposeRequest,
     ) -> Result<BehavioralContext, SoulError> {
-        let config = self.config_store.load(&req.agent_id)?;
+        let config = self.config_store.load(&req.workspace_id)?;
         let adaptation_state = self.adaptation_store.load_current(&req.agent_id)?;
         let identity_snapshot = self.identity_reader.read_snapshot(&req).await.ok();
         let verification_result = self.registry_reader.verify(&req).await.ok();
@@ -3505,14 +3502,15 @@ impl ComposeService {
             generated_at: Utc::now(),
         })?;
 
-        if matches!(normalized.registry_status(), Some("revoked")) {
-            return Ok(build_revoked_context(&normalized));
+        let mode = resolve_compose_mode(&normalized)?;
+        if matches!(mode, ComposeMode::FailClosed) {
+            return Ok(build_fail_closed_context(&normalized));
         }
 
-        let trait_profile = derive_effective_profile(&normalized)?;
-        let communication_rules = derive_communication_rules(&normalized, &trait_profile);
-        let decision_rules = derive_decision_rules(&normalized, &trait_profile);
-        let warnings = derive_warnings(&normalized);
+        let trait_profile = derive_effective_profile(&normalized, mode)?;
+        let communication_rules = derive_communication_rules(&normalized, &trait_profile, mode);
+        let decision_rules = derive_decision_rules(&normalized, &trait_profile, mode);
+        let warnings = derive_warnings(&normalized, mode);
 
         let system_prompt_prefix = self.template_engine.render_prefix(
             &normalized,
@@ -3520,6 +3518,7 @@ impl ComposeService {
             &communication_rules,
             &decision_rules,
             &warnings,
+            mode,
         )?;
 
         Ok(BehavioralContext {
@@ -3546,6 +3545,7 @@ impl ComposeService {
 ```rust
 pub fn derive_effective_profile(
     normalized: &NormalizedInputs,
+    mode: ComposeMode,
 ) -> Result<PersonalityProfile, SoulError> {
     let mut profile = normalized.config.trait_baseline.clone();
 
@@ -3556,17 +3556,19 @@ pub fn derive_effective_profile(
         }
     }
 
-    if let Some(verification) = &normalized.verification {
-        match verification.status.as_str() {
-            "suspended" => {
-                profile.initiative = clamp01(profile.initiative - 0.30);
-                profile.risk_tolerance = clamp01(profile.risk_tolerance - 0.25);
-            }
-            "pending" => {
-                profile.initiative = clamp01(profile.initiative - 0.10);
-            }
-            _ => {}
+    match mode {
+        ComposeMode::Restricted => {
+            profile.initiative = clamp01(profile.initiative - 0.30);
+            profile.risk_tolerance = clamp01(profile.risk_tolerance - 0.25);
         }
+        ComposeMode::Degraded => {
+            profile.initiative = clamp01(profile.initiative - 0.10);
+            profile.risk_tolerance = clamp01(profile.risk_tolerance - 0.10);
+        }
+        ComposeMode::BaselineOnly => {
+            profile.initiative = clamp01(profile.initiative - 0.05);
+        }
+        ComposeMode::Normal | ComposeMode::FailClosed => {}
     }
 
     apply_bounded_overrides(
@@ -3593,8 +3595,9 @@ pub fn render_prefix(
     communication_rules: &[String],
     decision_rules: &[String],
     warnings: &[String],
+    mode: ComposeMode,
 ) -> Result<String, SoulError> {
-    if matches!(normalized.registry_status(), Some("revoked")) {
+    if matches!(mode, ComposeMode::FailClosed) {
         return Ok(
             "Identity revoked. Do not continue normal autonomous operation. Ask for operator intervention."
                 .to_string(),
@@ -3609,6 +3612,10 @@ pub fn render_prefix(
             profile.directness, profile.warmth, profile.formality
         ),
     ];
+
+    if matches!(mode, ComposeMode::Restricted) {
+        lines.push("Operate in restricted advisory mode only.".into());
+    }
 
     lines.extend(communication_rules.iter().cloned());
     lines.extend(decision_rules.iter().cloned());
@@ -3740,10 +3747,12 @@ pub async fn soul_explain_context(
 async fn revoked_status_returns_fail_closed_context() {
     let deps = test_deps_with_registry_status("revoked");
     let context = deps.compose_service.compose(ComposeRequest {
+        workspace_id: "alpha".into(),
         agent_id: "alpha".into(),
-        mode: ComposeMode::Full,
-        identity_source: None,
-        registry_source: None,
+        session_id: "sess-01".into(),
+        include_reputation: true,
+        include_relationships: true,
+        include_commitments: true,
     }).await.unwrap();
 
     assert!(context.system_prompt_prefix.contains("Identity revoked"));
@@ -3753,10 +3762,12 @@ async fn revoked_status_returns_fail_closed_context() {
 async fn suspended_status_reduces_initiative() {
     let deps = test_deps_with_registry_status("suspended");
     let context = deps.compose_service.compose(ComposeRequest {
+        workspace_id: "alpha".into(),
         agent_id: "alpha".into(),
-        mode: ComposeMode::Full,
-        identity_source: None,
-        registry_source: None,
+        session_id: "sess-02".into(),
+        include_reputation: true,
+        include_relationships: true,
+        include_commitments: true,
     }).await.unwrap();
 
     assert!(context.trait_profile.initiative < 0.84);
@@ -4029,6 +4040,7 @@ fn prefix_renderer_returns_fail_closed_for_revoked_identity() {
         &[],
         &[],
         &["Identity revoked".into()],
+        ComposeMode::FailClosed,
     ).unwrap();
     assert!(prefix.contains("Identity revoked"));
 }
@@ -4051,6 +4063,7 @@ fn cache_key_changes_when_registry_status_changes() {
 pub fn derive_decision_rules(
     normalized: &NormalizedInputs,
     profile: &PersonalityProfile,
+    mode: ComposeMode,
 ) -> Vec<String> {
     let mut rules = Vec::new();
 
@@ -4063,8 +4076,11 @@ pub fn derive_decision_rules(
     if profile.risk_tolerance < 0.25 {
         rules.push("Prefer verification before consequential actions.".into());
     }
-    if matches!(normalized.registry_status(), Some("suspended")) {
+    if matches!(mode, ComposeMode::Restricted) {
         rules.push("Ask for operator confirmation before lasting changes.".into());
+    }
+    if matches!(mode, ComposeMode::Degraded | ComposeMode::BaselineOnly) {
+        rules.push("State uncertainty explicitly when upstream context is incomplete.".into());
     }
 
     rules
@@ -4110,6 +4126,7 @@ pub struct ExplainReport {
 pub fn build_explain_report(
     normalized: &NormalizedInputs,
     profile: &PersonalityProfile,
+    mode: ComposeMode,
 ) -> ExplainReport {
     ExplainReport {
         agent_id: normalized.agent_id.clone(),
@@ -4121,9 +4138,9 @@ pub fn build_explain_report(
             .iter()
             .map(|item| format!("{}={}", item.name, item.weight))
             .collect(),
-        decision_rules: derive_decision_rules(normalized, profile),
+        decision_rules: derive_decision_rules(normalized, profile, mode),
         adaptation_notes: normalized.adaptation.notes.clone(),
-        warnings: collect_behavior_warnings(normalized),
+        warnings: collect_behavior_warnings(normalized, mode),
     }
 }
 
@@ -4159,8 +4176,9 @@ pub fn cmd_inspect(
     args: InspectArgs,
 ) -> Result<(), SoulError> {
     let normalized = services.reader.load_normalized(args.agent_id.clone())?;
+    let mode = resolve_compose_mode(&normalized)?;
     let profile = services.reader.load_profile(&normalized.profile_name)?;
-    let report = build_explain_report(&normalized, &profile);
+    let report = build_explain_report(&normalized, &profile, mode);
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report).unwrap());
@@ -4182,9 +4200,10 @@ impl TemplateEngine {
         &self,
         normalized: &NormalizedInputs,
         profile: &PersonalityProfile,
+        mode: ComposeMode,
     ) -> Result<String, SoulError> {
-        let warnings = collect_behavior_warnings(normalized);
-        let rules = derive_decision_rules(normalized, profile);
+        let warnings = collect_behavior_warnings(normalized, mode);
+        let rules = derive_decision_rules(normalized, profile, mode);
         let template = self.env.get_template("prefix")
             .map_err(|err| SoulError::InvalidConfig(err.to_string()))?;
 
@@ -4205,13 +4224,14 @@ impl TemplateEngine {
         &self,
         normalized: &NormalizedInputs,
         profile: &PersonalityProfile,
+        mode: ComposeMode,
         runtime: &ComposeRuntimeContext,
     ) -> Result<String, SoulError> {
         let template = self.env.get_template("full")
             .map_err(|err| SoulError::InvalidConfig(err.to_string()))?;
 
         template.render(minijinja::context! {
-            prefix => self.render_prefix_context(normalized, profile)?,
+            prefix => self.render_prefix_context(normalized, profile, mode)?,
             task_title => runtime.task_title,
             task_summary => runtime.task_summary,
             hard_constraints => runtime.hard_constraints,
@@ -4230,17 +4250,16 @@ impl ComposeService {
         req: ComposeRequest,
     ) -> Result<BehavioralContext, SoulError> {
         let normalized = self.reader.load_from_request(&req).await?;
+        let mode = resolve_compose_mode(&normalized)?;
         let profile = self.reader.load_profile(&normalized.profile_name)?;
 
-        if matches!(normalized.registry_status(), Some("revoked")) {
-            return Err(SoulError::RegistryBlocked {
-                reason: "registry marked identity as revoked".into(),
-            });
+        if matches!(mode, ComposeMode::FailClosed) {
+            return Ok(build_fail_closed_context(&normalized));
         }
 
-        let prefix = self.templates.render_prefix_context(&normalized, &profile)?;
-        let full_prompt = self.templates.render_full_prompt(&normalized, &profile, &req.runtime)?;
-        let explain = build_explain_report(&normalized, &profile);
+        let prefix = self.templates.render_prefix_context(&normalized, &profile, mode)?;
+        let full_prompt = self.templates.render_full_prompt(&normalized, &profile, mode, &req.runtime)?;
+        let explain = build_explain_report(&normalized, &profile, mode);
 
         Ok(BehavioralContext {
             agent_id: normalized.agent_id,
@@ -4261,9 +4280,11 @@ fn full_template_mentions_runtime_constraints() {
     let engine = TemplateEngine::load_default().unwrap();
     let normalized = healthy_normalized_fixture();
     let profile = healthy_profile_fixture();
+    let mode = ComposeMode::Normal;
     let prompt = engine.render_full_prompt(
         &normalized,
         &profile,
+        mode,
         &ComposeRuntimeContext {
             task_title: "Review PLAN".into(),
             task_summary: "Check transport contract".into(),
@@ -4287,8 +4308,9 @@ pub async fn api_explain(
     Query(req): Query<ExplainHttpQuery>,
 ) -> Result<Json<ApiResponse<ExplainReport>>, ApiError> {
     let normalized = state.services.reader.load_normalized(req.agent_id).map_err(api_map_error)?;
+    let mode = resolve_compose_mode(&normalized).map_err(api_map_error)?;
     let profile = state.services.reader.load_profile(&normalized.profile_name).map_err(api_map_error)?;
-    Ok(Json(ApiResponse::ok(build_explain_report(&normalized, &profile))))
+    Ok(Json(ApiResponse::ok(build_explain_report(&normalized, &profile, mode))))
 }
 
 pub async fn soul_explain(
@@ -4296,8 +4318,9 @@ pub async fn soul_explain(
     args: ExplainRequest,
 ) -> Result<ExplainReport, McpError> {
     let normalized = ctx.services.reader.load_normalized(args.agent_id).map_err(mcp_map_error)?;
+    let mode = resolve_compose_mode(&normalized).map_err(mcp_map_error)?;
     let profile = ctx.services.reader.load_profile(&normalized.profile_name).map_err(mcp_map_error)?;
-    Ok(build_explain_report(&normalized, &profile))
+    Ok(build_explain_report(&normalized, &profile, mode))
 }
 ```
 
