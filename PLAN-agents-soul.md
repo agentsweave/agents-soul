@@ -4089,3 +4089,247 @@ impl TemplateEngine {
     }
 }
 ```
+
+---
+
+## 57. Executable Draft: Explain Formatter and Inspect Output
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExplainReport {
+    pub agent_id: String,
+    pub profile_name: String,
+    pub registry_status: Option<String>,
+    pub standing_level: Option<String>,
+    pub applied_traits: Vec<String>,
+    pub decision_rules: Vec<String>,
+    pub adaptation_notes: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+pub fn build_explain_report(
+    normalized: &NormalizedInputs,
+    profile: &PersonalityProfile,
+) -> ExplainReport {
+    ExplainReport {
+        agent_id: normalized.agent_id.clone(),
+        profile_name: normalized.profile_name.clone(),
+        registry_status: normalized.registry_status().map(str::to_string),
+        standing_level: normalized.standing_level().map(str::to_string),
+        applied_traits: profile
+            .traits
+            .iter()
+            .map(|item| format!("{}={}", item.name, item.weight))
+            .collect(),
+        decision_rules: derive_decision_rules(normalized, profile),
+        adaptation_notes: normalized.adaptation.notes.clone(),
+        warnings: collect_behavior_warnings(normalized),
+    }
+}
+
+pub fn render_explain_text(report: &ExplainReport) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("Agent: {}\n", report.agent_id));
+    out.push_str(&format!("Profile: {}\n", report.profile_name));
+    out.push_str(&format!(
+        "Registry: {} / {}\n",
+        report.registry_status.as_deref().unwrap_or("unknown"),
+        report.standing_level.as_deref().unwrap_or("unknown"),
+    ));
+    out.push_str("Traits:\n");
+    for item in &report.applied_traits {
+        out.push_str(&format!("- {item}\n"));
+    }
+    out.push_str("Rules:\n");
+    for item in &report.decision_rules {
+        out.push_str(&format!("- {item}\n"));
+    }
+    for warning in &report.warnings {
+        out.push_str(&format!("warning: {warning}\n"));
+    }
+    out
+}
+```
+
+### 57.1 Inspect command
+
+```rust
+pub fn cmd_inspect(
+    services: &SoulServices,
+    args: InspectArgs,
+) -> Result<(), SoulError> {
+    let normalized = services.reader.load_normalized(args.agent_id.clone())?;
+    let profile = services.reader.load_profile(&normalized.profile_name)?;
+    let report = build_explain_report(&normalized, &profile);
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report).unwrap());
+    } else {
+        println!("{}", render_explain_text(&report));
+    }
+
+    Ok(())
+}
+```
+
+---
+
+## 58. Executable Draft: Full Template Render Pipeline
+
+```rust
+impl TemplateEngine {
+    pub fn render_prefix_context(
+        &self,
+        normalized: &NormalizedInputs,
+        profile: &PersonalityProfile,
+    ) -> Result<String, SoulError> {
+        let warnings = collect_behavior_warnings(normalized);
+        let rules = derive_decision_rules(normalized, profile);
+        let template = self.env.get_template("prefix")
+            .map_err(|err| SoulError::InvalidConfig(err.to_string()))?;
+
+        template.render(minijinja::context! {
+            agent_id => normalized.agent_id,
+            profile_name => normalized.profile_name,
+            registry_status => normalized.registry_status().unwrap_or("unknown"),
+            standing_level => normalized.standing_level().unwrap_or("unknown"),
+            tone => profile.default_tone,
+            traits => profile.traits,
+            rules => rules,
+            adaptation_notes => normalized.adaptation.notes,
+            warnings => warnings,
+        }).map_err(|err| SoulError::Template(err.to_string()))
+    }
+
+    pub fn render_full_prompt(
+        &self,
+        normalized: &NormalizedInputs,
+        profile: &PersonalityProfile,
+        runtime: &ComposeRuntimeContext,
+    ) -> Result<String, SoulError> {
+        let template = self.env.get_template("full")
+            .map_err(|err| SoulError::InvalidConfig(err.to_string()))?;
+
+        template.render(minijinja::context! {
+            prefix => self.render_prefix_context(normalized, profile)?,
+            task_title => runtime.task_title,
+            task_summary => runtime.task_summary,
+            hard_constraints => runtime.hard_constraints,
+            known_open_questions => runtime.open_questions,
+        }).map_err(|err| SoulError::Template(err.to_string()))
+    }
+}
+```
+
+### 58.1 Compose service usage
+
+```rust
+impl ComposeService {
+    pub async fn compose_full_prompt(
+        &self,
+        req: ComposeRequest,
+    ) -> Result<BehavioralContext, SoulError> {
+        let normalized = self.reader.load_from_request(&req).await?;
+        let profile = self.reader.load_profile(&normalized.profile_name)?;
+
+        if matches!(normalized.registry_status(), Some("revoked")) {
+            return Err(SoulError::RegistryBlocked {
+                reason: "registry marked identity as revoked".into(),
+            });
+        }
+
+        let prefix = self.templates.render_prefix_context(&normalized, &profile)?;
+        let full_prompt = self.templates.render_full_prompt(&normalized, &profile, &req.runtime)?;
+        let explain = build_explain_report(&normalized, &profile);
+
+        Ok(BehavioralContext {
+            agent_id: normalized.agent_id,
+            profile_name: normalized.profile_name,
+            system_prompt_prefix: prefix,
+            full_system_prompt: Some(full_prompt),
+            explain,
+        })
+    }
+}
+```
+
+### 58.2 Template contract test
+
+```rust
+#[test]
+fn full_template_mentions_runtime_constraints() {
+    let engine = TemplateEngine::load_default().unwrap();
+    let normalized = healthy_normalized_fixture();
+    let profile = healthy_profile_fixture();
+    let prompt = engine.render_full_prompt(
+        &normalized,
+        &profile,
+        &ComposeRuntimeContext {
+            task_title: "Review PLAN".into(),
+            task_summary: "Check transport contract".into(),
+            hard_constraints: vec!["Do not ignore registry status".into()],
+            open_questions: vec!["Need stronger repair story?".into()],
+        },
+    ).unwrap();
+
+    assert!(prompt.contains("Do not ignore registry status"));
+    assert!(prompt.contains("Review PLAN"));
+}
+```
+
+---
+
+## 59. Executable Draft: REST and MCP Parity for Explain/Compose
+
+```rust
+pub async fn api_explain(
+    State(state): State<AppState>,
+    Query(req): Query<ExplainHttpQuery>,
+) -> Result<Json<ApiResponse<ExplainReport>>, ApiError> {
+    let normalized = state.services.reader.load_normalized(req.agent_id).map_err(api_map_error)?;
+    let profile = state.services.reader.load_profile(&normalized.profile_name).map_err(api_map_error)?;
+    Ok(Json(ApiResponse::ok(build_explain_report(&normalized, &profile))))
+}
+
+pub async fn soul_explain(
+    ctx: ToolContext,
+    args: ExplainRequest,
+) -> Result<ExplainReport, McpError> {
+    let normalized = ctx.services.reader.load_normalized(args.agent_id).map_err(mcp_map_error)?;
+    let profile = ctx.services.reader.load_profile(&normalized.profile_name).map_err(mcp_map_error)?;
+    Ok(build_explain_report(&normalized, &profile))
+}
+```
+
+### 59.1 Parity tests
+
+```rust
+#[tokio::test]
+async fn explain_report_matches_between_rest_and_mcp() {
+    let app = soul_test_app().await;
+
+    let rest = app
+        .get_json::<ApiResponse<ExplainReport>>("/api/v1/explain?agent_id=agent.alpha")
+        .await
+        .unwrap()
+        .data;
+
+    let mcp = soul_explain(
+        ToolContext::test(app.deps().clone()),
+        ExplainRequest {
+            agent_id: "agent.alpha".into(),
+        },
+    ).await.unwrap();
+
+    assert_eq!(rest.agent_id, mcp.agent_id);
+    assert_eq!(rest.profile_name, mcp.profile_name);
+    assert_eq!(rest.registry_status, mcp.registry_status);
+}
+
+#[tokio::test]
+async fn compose_full_prompt_fails_closed_when_registry_revoked() {
+    let service = compose_service_with_revoked_fixture().await;
+    let err = service.compose_full_prompt(sample_compose_request()).await.unwrap_err();
+    assert!(matches!(err, SoulError::RegistryBlocked { .. }));
+}
+```
