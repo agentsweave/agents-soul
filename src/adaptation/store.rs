@@ -15,6 +15,7 @@ use crate::{
 use super::{
     bounds::clamp_trait_delta,
     overrides::{EffectiveOverrideSet, materialize_effective_overrides},
+    reducer::InteractionReduction,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,6 +57,26 @@ pub struct StoredAdaptationState {
 }
 
 impl AdaptiveWriteRequest {
+    pub fn from_reduction(
+        agent_id: impl Into<String>,
+        persist: bool,
+        updated_at: DateTime<Utc>,
+        reduction: &InteractionReduction,
+    ) -> Self {
+        Self {
+            agent_id: agent_id.into(),
+            persist,
+            trait_overrides: reduction.adaptation_state.trait_overrides.clone(),
+            communication_overrides: reduction.adaptation_state.communication_overrides.clone(),
+            heuristic_overrides: reduction.adaptation_state.heuristic_overrides.clone(),
+            notes: reduction.adaptation_state.notes.clone(),
+            evidence_window_size: reduction.adaptation_state.evidence_window_size,
+            interaction_count: reduction.interaction_count,
+            last_interaction_at: reduction.last_interaction_at,
+            updated_at,
+        }
+    }
+
     fn validate(&self) -> Result<(), SoulError> {
         if self.agent_id.trim().is_empty() {
             return Err(SoulError::EmptyField("agent_id"));

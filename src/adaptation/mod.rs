@@ -2,10 +2,12 @@ pub mod bounds;
 pub mod ema;
 pub mod notes;
 pub mod overrides;
+pub mod reducer;
 pub mod reset;
 pub mod store;
 
 pub use overrides::{EffectiveOverrideSet, materialize_effective_overrides};
+pub use reducer::{InteractionReduction, reduce_interaction_evidence};
 pub use reset::{
     AdaptiveResetEffect, AdaptiveResetRequest, AdaptiveResetResult, reset_adaptation_state,
     reset_workspace_adaptation_state,

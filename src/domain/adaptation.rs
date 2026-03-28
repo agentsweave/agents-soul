@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     ConflictStyle, FeedbackStyle, ParagraphBudget, QuestionStyle, RegisterStyle, UncertaintyStyle,
+    interactions::AdaptiveTrait,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -86,4 +87,32 @@ impl Default for AdaptationState {
 
 fn default_evidence_window_size() -> u32 {
     20
+}
+
+impl PersonalityOverride {
+    pub fn set_trait_delta(&mut self, trait_name: AdaptiveTrait, delta: f32) {
+        match trait_name {
+            AdaptiveTrait::Openness => self.openness = delta,
+            AdaptiveTrait::Conscientiousness => self.conscientiousness = delta,
+            AdaptiveTrait::Initiative => self.initiative = delta,
+            AdaptiveTrait::Directness => self.directness = delta,
+            AdaptiveTrait::Warmth => self.warmth = delta,
+            AdaptiveTrait::RiskTolerance => self.risk_tolerance = delta,
+            AdaptiveTrait::Verbosity => self.verbosity = delta,
+            AdaptiveTrait::Formality => self.formality = delta,
+        }
+    }
+
+    pub fn trait_delta(&self, trait_name: AdaptiveTrait) -> f32 {
+        match trait_name {
+            AdaptiveTrait::Openness => self.openness,
+            AdaptiveTrait::Conscientiousness => self.conscientiousness,
+            AdaptiveTrait::Initiative => self.initiative,
+            AdaptiveTrait::Directness => self.directness,
+            AdaptiveTrait::Warmth => self.warmth,
+            AdaptiveTrait::RiskTolerance => self.risk_tolerance,
+            AdaptiveTrait::Verbosity => self.verbosity,
+            AdaptiveTrait::Formality => self.formality,
+        }
+    }
 }
