@@ -1,6 +1,24 @@
+use serde::{Deserialize, Serialize};
+
 use super::{CURRENT_SCHEMA_VERSION, PersonalityProfile, ProvenanceReport, StatusSummary};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WarningSeverity {
+    Info,
+    Caution,
+    Important,
+    Severe,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BehaviorWarning {
+    pub severity: WarningSeverity,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BehavioralContext {
     pub schema_version: u32,
     pub agent_id: String,
@@ -12,7 +30,8 @@ pub struct BehavioralContext {
     pub active_commitments: Vec<String>,
     pub relationship_context: Vec<String>,
     pub adaptive_notes: Vec<String>,
-    pub warnings: Vec<String>,
+    #[serde(default)]
+    pub warnings: Vec<BehaviorWarning>,
     pub system_prompt_prefix: String,
     pub provenance: ProvenanceReport,
 }

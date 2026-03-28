@@ -1,9 +1,9 @@
 use std::{fs, path::Path};
 
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::domain::SoulError;
+use crate::domain::{CommunicationOverride, HeuristicOverride, PersonalityOverride, SoulError};
 
 use super::migrations;
 
@@ -118,6 +118,48 @@ INSERT OR IGNORE INTO interaction_events (
     Ok(inserted > 0)
 }
 
+pub fn load_adaptation_state(
+    conn: &Connection,
+    agent_id: &str,
+) -> Result<Option<AdaptationStateRecord>, SoulError> {
+    initialize_database(conn)?;
+
+    conn.query_row(
+        r#"
+SELECT
+    agent_id,
+    trait_overrides_json,
+    communication_overrides_json,
+    heuristic_overrides_json,
+    notes_json,
+    evidence_window_size,
+    interaction_count,
+    last_interaction_at,
+    last_reset_at,
+    updated_at
+FROM adaptation_state
+WHERE agent_id = ?1
+"#,
+        params![agent_id],
+        |row| {
+            Ok(AdaptationStateRecord {
+                agent_id: row.get(0)?,
+                trait_overrides_json: row.get(1)?,
+                communication_overrides_json: row.get(2)?,
+                heuristic_overrides_json: row.get(3)?,
+                notes_json: row.get(4)?,
+                evidence_window_size: row.get(5)?,
+                interaction_count: row.get(6)?,
+                last_interaction_at: parse_optional_timestamp(row.get::<_, Option<String>>(7)?)?,
+                last_reset_at: parse_optional_timestamp(row.get::<_, Option<String>>(8)?)?,
+                updated_at: parse_timestamp(row.get::<_, String>(9)?)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(storage_error)
+}
+
 pub fn upsert_adaptation_state(
     conn: &Connection,
     state: &AdaptationStateRecord,
@@ -212,15 +254,10 @@ INSERT OR IGNORE INTO adaptation_resets (
                 .map_err(storage_error)?;
             }
             ResetScope::Trait | ResetScope::Communication | ResetScope::Heuristic => {
-                conn.execute(
-                    r#"
-UPDATE adaptation_state
-SET last_reset_at = ?2, updated_at = ?2
-WHERE agent_id = ?1
-"#,
-                    params![&reset.agent_id, reset.recorded_at.to_rfc3339()],
-                )
-                .map_err(storage_error)?;
+                if let Some(mut state) = load_adaptation_state(conn, &reset.agent_id)? {
+                    apply_targeted_reset(&mut state, reset)?;
+                    upsert_adaptation_state(conn, &state)?;
+                }
             }
         }
 
@@ -237,6 +274,127 @@ WHERE agent_id = ?1
             Err(error)
         }
     }
+}
+
+fn apply_targeted_reset(
+    state: &mut AdaptationStateRecord,
+    reset: &AdaptationResetRecord,
+) -> Result<(), SoulError> {
+    match reset.scope {
+        ResetScope::All => {}
+        ResetScope::Trait => {
+            let mut overrides =
+                deserialize_json::<PersonalityOverride>(&state.trait_overrides_json)?;
+            if let Some(target_key) = reset.target_key.as_deref() {
+                clear_trait_override(&mut overrides, target_key)?;
+            } else {
+                overrides = PersonalityOverride::default();
+            }
+            state.trait_overrides_json = serialize_json(&overrides)?;
+        }
+        ResetScope::Communication => {
+            let mut overrides =
+                deserialize_json::<CommunicationOverride>(&state.communication_overrides_json)?;
+            if let Some(target_key) = reset.target_key.as_deref() {
+                clear_communication_override(&mut overrides, target_key)?;
+            } else {
+                overrides = CommunicationOverride::default();
+            }
+            state.communication_overrides_json = serialize_json(&overrides)?;
+        }
+        ResetScope::Heuristic => {
+            let mut overrides =
+                deserialize_json::<Vec<HeuristicOverride>>(&state.heuristic_overrides_json)?;
+            if let Some(target_key) = reset.target_key.as_deref() {
+                overrides.retain(|override_rule| override_rule.heuristic_id != target_key);
+            } else {
+                overrides.clear();
+            }
+            state.heuristic_overrides_json = serialize_json(&overrides)?;
+        }
+    }
+
+    // Notes are derived from adaptive effects; clear them so stale explanations do not survive a reset.
+    state.notes_json = "[]".to_owned();
+    state.last_reset_at = Some(reset.recorded_at);
+    state.updated_at = reset.recorded_at;
+    Ok(())
+}
+
+fn clear_trait_override(
+    overrides: &mut PersonalityOverride,
+    target_key: &str,
+) -> Result<(), SoulError> {
+    match target_key {
+        "openness" => overrides.openness = 0.0,
+        "conscientiousness" => overrides.conscientiousness = 0.0,
+        "initiative" => overrides.initiative = 0.0,
+        "directness" => overrides.directness = 0.0,
+        "warmth" => overrides.warmth = 0.0,
+        "risk_tolerance" => overrides.risk_tolerance = 0.0,
+        "verbosity" => overrides.verbosity = 0.0,
+        "formality" => overrides.formality = 0.0,
+        _ => {
+            return Err(SoulError::InvalidConfig(format!(
+                "unknown trait reset target `{target_key}`"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn clear_communication_override(
+    overrides: &mut CommunicationOverride,
+    target_key: &str,
+) -> Result<(), SoulError> {
+    match target_key {
+        "default_register" => overrides.default_register = None,
+        "paragraph_budget" => overrides.paragraph_budget = None,
+        "question_style" => overrides.question_style = None,
+        "uncertainty_style" => overrides.uncertainty_style = None,
+        "feedback_style" => overrides.feedback_style = None,
+        "conflict_style" => overrides.conflict_style = None,
+        _ => {
+            return Err(SoulError::InvalidConfig(format!(
+                "unknown communication reset target `{target_key}`"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn deserialize_json<T>(raw: &str) -> Result<T, SoulError>
+where
+    T: serde::de::DeserializeOwned,
+{
+    serde_json::from_str(raw).map_err(|error| SoulError::Storage(error.to_string()))
+}
+
+fn serialize_json<T>(value: &T) -> Result<String, SoulError>
+where
+    T: serde::Serialize,
+{
+    serde_json::to_string(value).map_err(|error| SoulError::Storage(error.to_string()))
+}
+
+fn parse_optional_timestamp(
+    value: Option<String>,
+) -> Result<Option<DateTime<Utc>>, rusqlite::Error> {
+    value.map(parse_timestamp).transpose()
+}
+
+fn parse_timestamp(value: String) -> Result<DateTime<Utc>, rusqlite::Error> {
+    DateTime::parse_from_rfc3339(&value)
+        .map(|timestamp| timestamp.with_timezone(&Utc))
+        .map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })
 }
 
 fn storage_error(error: rusqlite::Error) -> SoulError {
@@ -287,10 +445,14 @@ mod tests {
         initialize_database(&conn)?;
         initialize_database(&conn)?;
 
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0))?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
+            row.get(0)
+        })?;
 
-        ensure(count == 1, format!("expected one migration row, got {count}"))?;
+        ensure(
+            count == 1,
+            format!("expected one migration row, got {count}"),
+        )?;
         Ok(())
     }
 
@@ -320,10 +482,14 @@ mod tests {
             "expected duplicate interaction insert to be ignored",
         )?;
 
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM interaction_events", [], |row| row.get(0))?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM interaction_events", [], |row| {
+            row.get(0)
+        })?;
 
-        ensure(count == 1, format!("expected one interaction row, got {count}"))?;
+        ensure(
+            count == 1,
+            format!("expected one interaction row, got {count}"),
+        )?;
         Ok(())
     }
 
@@ -369,20 +535,32 @@ mod tests {
             recorded_at: test_timestamp(2026, 3, 29, 1, 2, 0)?,
         };
 
-        ensure(record_reset(&conn, &reset)?, "expected reset marker to be stored")?;
+        ensure(
+            record_reset(&conn, &reset)?,
+            "expected reset marker to be stored",
+        )?;
         ensure(
             !record_reset(&conn, &reset)?,
             "expected duplicate reset marker to be ignored",
         )?;
 
         let state_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM adaptation_state", [], |row| row.get(0))?;
+            conn.query_row("SELECT COUNT(*) FROM adaptation_state", [], |row| {
+                row.get(0)
+            })?;
         let event_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM interaction_events", [], |row| row.get(0))?;
+            conn.query_row("SELECT COUNT(*) FROM interaction_events", [], |row| {
+                row.get(0)
+            })?;
         let reset_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM adaptation_resets", [], |row| row.get(0))?;
+            conn.query_row("SELECT COUNT(*) FROM adaptation_resets", [], |row| {
+                row.get(0)
+            })?;
 
-        ensure(state_count == 0, format!("expected cleared state, got {state_count} rows"))?;
+        ensure(
+            state_count == 0,
+            format!("expected cleared state, got {state_count} rows"),
+        )?;
         ensure(
             event_count == 1,
             format!("expected one preserved interaction event, got {event_count}"),

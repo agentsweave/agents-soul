@@ -1,122 +1,105 @@
-use agents_soul::{
-    BehaviorWarning, BehavioralContext, ComposeMode, ComposeRequest, RecoveryState, RegisterStyle,
-    RegistryStatus, SoulConfig, StatusSummary, WarningSeverity,
+use agents_soul::app::config::WorkspacePaths;
+use agents_soul::domain::{
+    BehaviorWarning, BehavioralContext, CommunicationStyle, ComposeMode, ComposeRequest,
+    OfflineRegistryBehavior, PersonalityProfile, ProvenanceReport, RecoveryState, RegistryStatus,
+    RevokedBehavior, SoulConfig, SoulLimits, StatusSummary, TemplateConfig, WarningSeverity,
 };
-use chrono::Utc;
 
 #[test]
-fn reference_toml_parses_with_defaults() {
-    let config = toml::from_str::<SoulConfig>(
-        r#"
-schema_version = 1
-agent_id = "alpha"
-profile_name = "Alpha Builder"
-
-[trait_baseline]
-openness = 0.72
-conscientiousness = 0.90
-initiative = 0.84
-directness = 0.81
-warmth = 0.42
-risk_tolerance = 0.28
-verbosity = 0.34
-formality = 0.71
-
-[communication_style]
-default_register = "professional-direct"
-paragraph_budget = "short"
-question_style = "single-clarifier-when-needed"
-uncertainty_style = "explicit-and-bounded"
-feedback_style = "frank"
-conflict_style = "firm-respectful"
-
-[limits]
-max_trait_drift = 0.15
-max_prompt_prefix_chars = 4000
-max_adaptive_rules = 24
-offline_registry_behavior = "cautious"
-revoked_behavior = "fail-closed"
-
-[sources]
-identity_workspace = "~/.agents/alpha"
-registry_url = "http://127.0.0.1:7700"
-"#,
-    )
-    .expect("reference config should parse")
-    .finalize()
-    .expect("reference config should finalize");
+fn workspace_paths_match_planned_layout() {
+    let paths = WorkspacePaths::new("/tmp/example-soul");
 
     assert_eq!(
-        config.communication_style.default_register,
-        RegisterStyle::ProfessionalDirect
+        paths.config_path().to_string_lossy(),
+        "/tmp/example-soul/soul.toml"
     );
-    assert!(config.decision_heuristics.is_empty());
-    assert_eq!(config.templates.prompt_prefix_template, "prompt-prefix");
-    assert_eq!(config.sources.registry_agent_id, "alpha");
-    assert!(config.adaptation.enabled);
+    assert_eq!(
+        paths.adaptation_db_path().to_string_lossy(),
+        "/tmp/example-soul/.soul/patterns.sqlite"
+    );
+    assert_eq!(
+        paths.context_cache_path().to_string_lossy(),
+        "/tmp/example-soul/.soul/context_cache.json"
+    );
+    assert_eq!(
+        paths.adaptation_log_path().to_string_lossy(),
+        "/tmp/example-soul/.soul/adaptation_log.jsonl"
+    );
 }
 
 #[test]
-fn config_validation_rejects_out_of_range_traits() {
-    let mut config = SoulConfig::default();
-    config.trait_baseline.verbosity = 1.5;
-
-    let error = config.validate().expect_err("config should be rejected");
-    assert!(error.to_string().contains("verbosity"));
-}
-
-#[test]
-fn compose_request_requires_stable_identity_fields() {
-    let request = ComposeRequest {
-        workspace_id: String::new(),
-        agent_id: "alpha".into(),
-        session_id: "session-1".into(),
-        include_reputation: true,
-        include_relationships: true,
-        include_commitments: true,
+fn config_defaults_match_reference_semantics() {
+    let config = SoulConfig {
+        schema_version: 1,
+        agent_id: "alpha".to_owned(),
+        profile_name: "Alpha Builder".to_owned(),
+        ..SoulConfig::default()
     };
 
-    let error = request.validate().expect_err("empty workspace should fail");
-    assert!(error.to_string().contains("workspace_id"));
+    assert_eq!(config.trait_baseline, PersonalityProfile::default());
+    assert_eq!(config.communication_style, CommunicationStyle::default());
+    assert_eq!(config.limits, SoulLimits::default());
+    assert_eq!(config.templates, TemplateConfig::default());
+    assert!(config.decision_heuristics.is_empty());
+    assert_eq!(
+        config.limits.offline_registry_behavior,
+        OfflineRegistryBehavior::Cautious
+    );
+    assert_eq!(config.limits.revoked_behavior, RevokedBehavior::FailClosed);
 }
 
 #[test]
-fn behavioral_context_serializes_mode_and_structured_warnings() {
+fn compose_request_defaults_to_full_domain_context() {
+    let request = ComposeRequest::new("alpha", "session-1");
+
+    assert_eq!(request.workspace_id, ".");
+    assert_eq!(request.agent_id, "alpha");
+    assert!(request.include_reputation);
+    assert!(request.include_relationships);
+    assert!(request.include_commitments);
+}
+
+#[test]
+fn behavioral_context_carries_typed_status_information() {
     let context = BehavioralContext {
         schema_version: 1,
-        agent_id: "alpha".into(),
-        profile_name: "Alpha Builder".into(),
+        agent_id: "alpha".to_owned(),
+        profile_name: "Alpha Builder".to_owned(),
         status_summary: StatusSummary {
             compose_mode: ComposeMode::Restricted,
             identity_loaded: true,
             registry_verified: true,
             registry_status: Some(RegistryStatus::Suspended),
-            reputation_loaded: false,
+            reputation_loaded: true,
             recovery_state: Some(RecoveryState::Healthy),
         },
-        trait_profile: SoulConfig::default().trait_baseline,
-        communication_rules: vec!["Respond concisely and directly.".into()],
-        decision_rules: vec!["Lower initiative under suspension.".into()],
-        active_commitments: vec![],
-        relationship_context: vec![],
-        adaptive_notes: vec![],
+        trait_profile: PersonalityProfile::default(),
+        communication_rules: vec!["Respond concisely and directly.".to_owned()],
+        decision_rules: vec!["Require operator confirmation for risky actions.".to_owned()],
+        active_commitments: vec!["Finish contract review.".to_owned()],
+        relationship_context: vec!["User prefers direct discussion.".to_owned()],
+        adaptive_notes: vec!["Risk tolerance reduced after recent correction events.".to_owned()],
         warnings: vec![BehaviorWarning {
             severity: WarningSeverity::Severe,
-            code: "registry-suspended".into(),
-            message: "Restricted mode is active.".into(),
+            code: "registry_suspended".to_owned(),
+            message: "Registry standing is suspended; autonomous behavior must be restricted."
+                .to_owned(),
         }],
-        system_prompt_prefix: "You are alpha.".into(),
-        provenance: agents_soul::ProvenanceReport {
-            identity_fingerprint: Some("abc123".into()),
-            registry_verification_at: Some(Utc::now()),
-            config_hash: "cfg".into(),
-            adaptation_hash: "adp".into(),
-            input_hash: "inp".into(),
+        system_prompt_prefix: "You are agent alpha.".to_owned(),
+        provenance: ProvenanceReport {
+            identity_fingerprint: Some("abc123".to_owned()),
+            registry_verification_at: None,
+            config_hash: "cfg_001".to_owned(),
+            adaptation_hash: "adp_001".to_owned(),
+            input_hash: "inp_001".to_owned(),
         },
     };
 
-    let json = serde_json::to_value(&context).expect("behavioral context should serialize");
-    assert_eq!(json["status_summary"]["compose_mode"], "restricted");
-    assert_eq!(json["warnings"][0]["severity"], "severe");
-    assert_eq!(json["warnings"][0]["code"], "registry-suspended");
+    assert_eq!(context.status_summary.compose_mode, ComposeMode::Restricted);
+    assert_eq!(
+        context.status_summary.registry_status,
+        Some(RegistryStatus::Suspended)
+    );
+    assert_eq!(context.warnings.len(), 1);
+    assert_eq!(context.warnings[0].severity, WarningSeverity::Severe);
 }

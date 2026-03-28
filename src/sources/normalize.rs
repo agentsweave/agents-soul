@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 
 use crate::domain::{
     BehaviorInputs, ComposeMode, ComposeRequest, NormalizedInputs, RecoveryState, RegistryStatus,
-    RelationshipMarker, SoulError,
+    RelationshipMarker, SoulError, WarningSeverity,
 };
 
 pub fn normalize_inputs(
@@ -123,12 +123,12 @@ fn sort_relationships(relationships: &mut [RelationshipMarker]) {
     });
 }
 
-fn severity_rank(severity: crate::domain::WarningSeverity) -> u8 {
+fn severity_rank(severity: WarningSeverity) -> u8 {
     match severity {
-        crate::domain::WarningSeverity::Info => 0,
-        crate::domain::WarningSeverity::Caution => 1,
-        crate::domain::WarningSeverity::Important => 2,
-        crate::domain::WarningSeverity::Severe => 3,
+        WarningSeverity::Info => 0,
+        WarningSeverity::Caution => 1,
+        WarningSeverity::Important => 2,
+        WarningSeverity::Severe => 3,
     }
 }
 

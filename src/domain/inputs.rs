@@ -2,7 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AdaptationState, BehaviorWarning, ComposeMode, RecoveryState, RegistryStatus, SoulConfig,
+    AdaptationState, BehaviorWarning, CURRENT_SCHEMA_VERSION, ComposeMode, RecoveryState,
+    RegistryStatus, SoulConfig, SoulError,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,7 +23,7 @@ impl ComposeRequest {
     pub fn new(agent_id: impl Into<String>, session_id: impl Into<String>) -> Self {
         let agent_id = agent_id.into();
         Self {
-            workspace_id: agent_id.clone(),
+            workspace_id: ".".to_owned(),
             agent_id,
             session_id: session_id.into(),
             include_reputation: true,
@@ -31,15 +32,15 @@ impl ComposeRequest {
         }
     }
 
-    pub fn validate(&self) -> Result<(), super::SoulError> {
+    pub fn validate(&self) -> Result<(), SoulError> {
         if self.workspace_id.trim().is_empty() {
-            return Err(super::SoulError::EmptyField("workspace_id"));
+            return Err(SoulError::EmptyField("workspace_id"));
         }
         if self.agent_id.trim().is_empty() {
-            return Err(super::SoulError::EmptyField("agent_id"));
+            return Err(SoulError::EmptyField("agent_id"));
         }
         if self.session_id.trim().is_empty() {
-            return Err(super::SoulError::EmptyField("session_id"));
+            return Err(SoulError::EmptyField("session_id"));
         }
         Ok(())
     }
@@ -127,6 +128,20 @@ pub struct NormalizedInputs {
     pub soul_config: SoulConfig,
     pub adaptation_state: AdaptationState,
     pub generated_at: DateTime<Utc>,
+}
+
+impl Default for BehaviorInputs {
+    fn default() -> Self {
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            identity_snapshot: None,
+            verification_result: None,
+            reputation_summary: None,
+            soul_config: SoulConfig::default(),
+            adaptation_state: AdaptationState::default(),
+            generated_at: Utc::now(),
+        }
+    }
 }
 
 fn default_true() -> bool {

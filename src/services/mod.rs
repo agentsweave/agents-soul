@@ -10,17 +10,18 @@ pub mod relationships;
 pub mod templates;
 pub mod warnings;
 
-use thiserror::Error;
-
+pub use commitments::CommitmentsService;
+pub use communication::CommunicationRulesService;
 pub use compose::ComposeService;
+pub use decision_rules::DecisionRulesService;
+pub use profile::EffectiveProfileService;
+pub use provenance::ProvenanceService;
+pub use relationships::RelationshipsService;
+pub use warnings::WarningService;
+
+pub type ServiceError = crate::domain::SoulError;
 
 #[derive(Debug, Clone, Default)]
 pub struct SoulServices {
     pub compose: ComposeService,
-}
-
-#[derive(Debug, Error, Clone, PartialEq)]
-pub enum ServiceError {
-    #[error("{0}")]
-    InvalidRequest(crate::domain::SoulError),
 }

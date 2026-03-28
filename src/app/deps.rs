@@ -1,2 +1,6 @@
+use crate::services::SoulServices;
+
 #[derive(Debug, Clone, Default)]
-pub struct AppDeps;
+pub struct SoulDependencies {
+    pub services: SoulServices,
+}

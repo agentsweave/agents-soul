@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
 };
 
@@ -11,11 +11,6 @@ pub const ADAPTATION_DB_FILE: &str = "patterns.sqlite";
 pub const CONTEXT_CACHE_FILE: &str = "context_cache.json";
 pub const ADAPTATION_LOG_FILE: &str = "adaptation_log.jsonl";
 
-/// Paths derived from a soul workspace root.
-///
-/// The workspace input is always the directory that owns `soul.toml`; callers do not
-/// pass the file path itself, and the loader never walks parent directories to search
-/// for config. All derived state remains inside `<workspace>/.soul/`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspacePaths {
     workspace_root: PathBuf,
@@ -53,6 +48,37 @@ impl WorkspacePaths {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplicationConfig {
+    workspace_root: PathBuf,
+}
+
+impl ApplicationConfig {
+    pub fn new(workspace_root: impl Into<PathBuf>) -> Self {
+        Self {
+            workspace_root: workspace_root.into(),
+        }
+    }
+
+    pub fn workspace_root(&self) -> &Path {
+        &self.workspace_root
+    }
+
+    pub fn workspace_paths(&self) -> WorkspacePaths {
+        WorkspacePaths::new(self.workspace_root.clone())
+    }
+
+    pub fn load_soul_config(&self) -> Result<SoulConfig, SoulError> {
+        load_soul_config(self.workspace_root.clone())
+    }
+}
+
+impl Default for ApplicationConfig {
+    fn default() -> Self {
+        Self::new(env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+    }
+}
+
 pub fn load_soul_config(workspace_root: impl Into<PathBuf>) -> Result<SoulConfig, SoulError> {
     let paths = WorkspacePaths::new(workspace_root);
     validate_workspace_root(paths.root())?;
@@ -84,174 +110,4 @@ fn validate_workspace_root(workspace_root: &Path) -> Result<(), SoulError> {
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{WorkspacePaths, load_soul_config};
-    use crate::domain::{
-        OfflineRegistryBehavior, RevokedBehavior, SoulError, SoulLimits, TemplateConfig,
-    };
-    use std::{
-        env, fs,
-        path::{Path, PathBuf},
-        sync::atomic::{AtomicU64, Ordering},
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
-    #[test]
-    fn workspace_paths_follow_documented_layout() {
-        let paths = WorkspacePaths::new("/tmp/example-soul");
-
-        assert_eq!(
-            paths.config_path().to_string_lossy(),
-            "/tmp/example-soul/soul.toml"
-        );
-        assert_eq!(
-            paths.adaptation_db_path().to_string_lossy(),
-            "/tmp/example-soul/.soul/patterns.sqlite"
-        );
-        assert_eq!(
-            paths.context_cache_path().to_string_lossy(),
-            "/tmp/example-soul/.soul/context_cache.json"
-        );
-        assert_eq!(
-            paths.adaptation_log_path().to_string_lossy(),
-            "/tmp/example-soul/.soul/adaptation_log.jsonl"
-        );
-    }
-
-    #[test]
-    fn load_soul_config_materializes_defaults_deterministically() {
-        let workspace = TestWorkspace::new();
-        workspace.write_config(
-            r#"
-schema_version = 1
-agent_id = "alpha"
-profile_name = "Alpha Builder"
-
-[sources]
-identity_workspace = "~/.agents/alpha"
-registry_url = "http://127.0.0.1:7700"
-"#,
-        );
-
-        let config = load_soul_config(workspace.path()).expect("config should load");
-
-        assert_eq!(config.sources.registry_agent_id, "alpha");
-        assert_eq!(config.limits, SoulLimits::default());
-        assert_eq!(config.templates, TemplateConfig::default());
-        assert!(config.adaptation.enabled);
-        assert_eq!(config.adaptation.learning_window_days, 30);
-        assert_eq!(config.adaptation.min_interactions_for_adapt, 5);
-        assert_eq!(
-            config.limits.offline_registry_behavior,
-            OfflineRegistryBehavior::Cautious
-        );
-        assert_eq!(config.limits.revoked_behavior, RevokedBehavior::FailClosed);
-    }
-
-    #[test]
-    fn load_soul_config_rejects_workspace_file_paths() {
-        let workspace = TestWorkspace::new();
-        workspace.write_config(
-            r#"
-schema_version = 1
-agent_id = "alpha"
-profile_name = "Alpha Builder"
-
-[sources]
-identity_workspace = "~/.agents/alpha"
-registry_url = "http://127.0.0.1:7700"
-"#,
-        );
-
-        let error =
-            load_soul_config(workspace.path().join("soul.toml")).expect_err("file paths fail");
-
-        assert!(
-            matches!(error, SoulError::InvalidConfig(message) if message.contains("directory containing `soul.toml`"))
-        );
-    }
-
-    #[test]
-    fn load_soul_config_reports_parse_failures_with_file_path() {
-        let workspace = TestWorkspace::new();
-        workspace.write_config(
-            r#"
-schema_version = 1
-agent_id = "alpha"
-profile_name = "Alpha Builder"
-
-[sources]
-identity_workspace = "~/.agents/alpha"
-registry_url = 42
-"#,
-        );
-
-        let error = load_soul_config(workspace.path()).expect_err("parse failure expected");
-
-        assert!(
-            matches!(error, SoulError::ConfigParse { path, message } if path.ends_with("soul.toml") && message.contains("registry_url"))
-        );
-    }
-
-    #[test]
-    fn load_soul_config_reports_validation_failures_with_actionable_fields() {
-        let workspace = TestWorkspace::new();
-        workspace.write_config(
-            r#"
-schema_version = 1
-agent_id = "alpha"
-profile_name = "Alpha Builder"
-
-[sources]
-identity_workspace = "~/.agents/alpha"
-registry_url = "registry.internal"
-
-[adaptation]
-min_interactions_for_adapt = 0
-"#,
-        );
-
-        let error = load_soul_config(workspace.path()).expect_err("validation failure expected");
-
-        assert!(
-            matches!(error, SoulError::InvalidConfig(message) if message.contains("sources.registry_url") || message.contains("adaptation.min_interactions_for_adapt"))
-        );
-    }
-
-    struct TestWorkspace {
-        root: PathBuf,
-    }
-
-    impl TestWorkspace {
-        fn new() -> Self {
-            static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-            let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let nanos = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("clock should be monotonic enough for tests")
-                .as_nanos();
-            let root = env::temp_dir().join(format!("agents-soul-config-{nanos}-{unique}"));
-
-            fs::create_dir_all(&root).expect("temp workspace should be created");
-            Self { root }
-        }
-
-        fn path(&self) -> &Path {
-            &self.root
-        }
-
-        fn write_config(&self, contents: &str) {
-            fs::write(self.root.join("soul.toml"), contents).expect("config should be written");
-        }
-    }
-
-    impl Drop for TestWorkspace {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.root);
-        }
-    }
 }
