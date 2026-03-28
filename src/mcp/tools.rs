@@ -1,11 +1,16 @@
 use crate::{
-    domain::{BehavioralContext, ComposeRequest},
-    services::{ServiceError, SoulServices},
+    app::deps::SoulDependencies,
+    domain::{BehavioralContext, ComposeRequest, SoulError, SoulTransportError},
+    services::ServiceError,
 };
 
 pub fn compose_context(
-    services: &SoulServices,
+    deps: &SoulDependencies,
     request: ComposeRequest,
 ) -> Result<BehavioralContext, ServiceError> {
-    services.compose.compose(request)
+    deps.compose_context(request)
+}
+
+pub fn map_compose_error(error: &SoulError) -> SoulTransportError {
+    error.transport_error()
 }

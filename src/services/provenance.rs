@@ -25,6 +25,9 @@ impl ProvenanceService {
                 .verification_result
                 .as_ref()
                 .and_then(|verification| verification.verified_at),
+            identity_source: normalized.identity_provenance.source,
+            verification_source: normalized.verification_provenance.source,
+            reputation_source: normalized.reputation_provenance.source,
             config_hash: prefixed_hash("cfg", &normalized.soul_config),
             adaptation_hash: prefixed_hash("adp", &normalized.adaptation_state),
             input_hash: prefixed_hash("inp", normalized),

@@ -2,7 +2,10 @@ use std::time::SystemTime;
 
 use crate::{
     adaptation::read_workspace_effective_overrides,
-    app::config::{WorkspacePaths, load_soul_config},
+    app::{
+        config::{WorkspacePaths, load_soul_config},
+        deps::SourceDependencies,
+    },
     domain::{
         BehaviorInputs, BehavioralContext, CURRENT_SCHEMA_VERSION, ComposeMode, ComposeRequest,
         NormalizedInputs, SoulConfig, StatusSummary,
@@ -13,7 +16,7 @@ use crate::{
         profile::EffectiveProfileService, provenance::ProvenanceService,
         relationships::RelationshipsService, warnings::WarningService,
     },
-    sources::{identity::IdentityReader, normalize::normalize_inputs, registry::RegistryReader},
+    sources::normalize::normalize_inputs,
 };
 
 use super::ServiceError;
@@ -22,40 +25,36 @@ use super::ServiceError;
 pub struct ComposeService;
 
 impl ComposeService {
-    pub fn compose(&self, request: ComposeRequest) -> Result<BehavioralContext, ServiceError> {
+    pub fn compose(
+        &self,
+        deps: &SourceDependencies,
+        request: ComposeRequest,
+    ) -> Result<BehavioralContext, ServiceError> {
         request.validate()?;
         let config = load_config_for_request(&request)?;
         let effective_overrides =
             read_workspace_effective_overrides(&request.workspace_id, &config, &request.agent_id)?;
 
-        let identity_reader = IdentityReader;
-        let registry_reader = RegistryReader;
-
-        let identity_snapshot = match identity_reader.read_snapshot(&request) {
-            Ok(snapshot) => Some(snapshot),
-            Err(crate::domain::SoulError::IdentityUnavailable) => None,
-            Err(error) => return Err(error),
-        };
-        let verification_result = match registry_reader.verify(&request) {
-            Ok(verification) => Some(verification),
-            Err(crate::domain::SoulError::RegistryUnavailable) => None,
-            Err(error) => return Err(error),
-        };
-        let reputation_summary = match registry_reader.reputation(&request) {
-            Ok(reputation) => Some(reputation),
-            Err(crate::domain::SoulError::RegistryUnavailable) => None,
-            Err(error) => return Err(error),
-        };
+        let identity_selection = deps.identity.load(&request, &config)?;
+        let verification_selection = deps.registry.load_verification(&request)?;
+        let reputation_selection = deps.registry.load_reputation(&request)?;
+        let mut reader_warnings = identity_selection.warnings.clone();
+        reader_warnings.extend(verification_selection.warnings.clone());
+        reader_warnings.extend(reputation_selection.warnings.clone());
 
         let normalized = normalize_inputs(
             &request,
             BehaviorInputs {
                 schema_version: CURRENT_SCHEMA_VERSION,
-                identity_snapshot,
-                verification_result,
-                reputation_summary,
+                identity_snapshot: identity_selection.value,
+                identity_provenance: identity_selection.provenance,
+                verification_result: verification_selection.value,
+                verification_provenance: verification_selection.provenance,
+                reputation_summary: reputation_selection.value,
+                reputation_provenance: reputation_selection.provenance,
                 soul_config: config,
                 adaptation_state: effective_overrides.adaptation_state,
+                reader_warnings,
                 generated_at: SystemTime::UNIX_EPOCH.into(),
             },
         )?;
@@ -242,14 +241,20 @@ mod tests {
             },
         )?;
 
-        let context = ComposeService.compose(ComposeRequest {
-            workspace_id: workspace.display().to_string(),
-            agent_id: "agent.alpha".to_owned(),
-            session_id: "session.alpha".to_owned(),
-            include_reputation: true,
-            include_relationships: true,
-            include_commitments: true,
-        })?;
+        let context = ComposeService.compose(
+            &crate::app::deps::SourceDependencies::default(),
+            ComposeRequest {
+                workspace_id: workspace.display().to_string(),
+                agent_id: "agent.alpha".to_owned(),
+                session_id: "session.alpha".to_owned(),
+                identity_snapshot_path: None,
+                registry_verification_path: None,
+                registry_reputation_path: None,
+                include_reputation: true,
+                include_relationships: true,
+                include_commitments: true,
+            },
+        )?;
 
         assert_eq!(context.trait_profile.verbosity, 0.49);
         assert_eq!(

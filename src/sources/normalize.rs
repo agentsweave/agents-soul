@@ -1,9 +1,11 @@
 use std::cmp::Reverse;
 
 use crate::domain::{
-    BehaviorInputs, ComposeMode, ComposeRequest, NormalizedInputs, RecoveryState, RegistryStatus,
-    RelationshipMarker, SoulError, WarningSeverity,
+    BehaviorInputs, ComposeMode, ComposeRequest, InputProvenance, InputSourceKind,
+    NormalizedInputs, RecoveryState, RegistryStatus, RelationshipMarker, SoulError,
+    WarningSeverity,
 };
+use crate::sources::identity::agent_mismatch_warning;
 
 pub fn normalize_inputs(
     request: &ComposeRequest,
@@ -32,8 +34,30 @@ pub fn normalize_inputs(
         .heuristic_overrides
         .dedup_by(|left, right| left.heuristic_id == right.heuristic_id);
 
+    inputs.reader_warnings.sort_by(|left, right| {
+        (
+            severity_rank(left.severity),
+            left.code.as_str(),
+            left.message.as_str(),
+        )
+            .cmp(&(
+                severity_rank(right.severity),
+                right.code.as_str(),
+                right.message.as_str(),
+            ))
+    });
+    inputs
+        .reader_warnings
+        .dedup_by(|left, right| left.code == right.code && left.message == right.message);
+
+    let mut reader_warnings = inputs.reader_warnings;
+
     let identity_snapshot = inputs.identity_snapshot.and_then(|mut snapshot| {
         if snapshot.agent_id != request.agent_id {
+            reader_warnings.push(agent_mismatch_warning(
+                &request.agent_id,
+                &snapshot.agent_id,
+            ));
             return None;
         }
 
@@ -73,6 +97,14 @@ pub fn normalize_inputs(
     });
 
     let verification_result = inputs.verification_result;
+    let verification_provenance = if verification_result.is_some() {
+        inputs.verification_provenance
+    } else {
+        unavailable_if_missing(
+            inputs.verification_provenance,
+            "registry verification unavailable after source selection",
+        )
+    };
     let reputation_summary = if request.include_reputation && verification_result.is_some() {
         inputs.reputation_summary.map(|mut summary| {
             summary.context.sort();
@@ -81,6 +113,24 @@ pub fn normalize_inputs(
         })
     } else {
         None
+    };
+    let identity_provenance = if identity_snapshot.is_some() {
+        inputs.identity_provenance
+    } else {
+        unavailable_if_missing(
+            inputs.identity_provenance,
+            "identity snapshot unavailable after source selection",
+        )
+    };
+    let reputation_provenance = if reputation_summary.is_some() {
+        inputs.reputation_provenance
+    } else if !request.include_reputation {
+        InputProvenance::unavailable("reputation disabled by request")
+    } else {
+        unavailable_if_missing(
+            inputs.reputation_provenance,
+            "registry reputation unavailable after source selection",
+        )
     };
 
     let compose_mode_hint = compose_mode_hint(
@@ -100,10 +150,14 @@ pub fn normalize_inputs(
         profile_name: inputs.soul_config.profile_name.clone(),
         compose_mode_hint: Some(compose_mode_hint),
         identity_snapshot,
+        identity_provenance,
         verification_result,
+        verification_provenance,
         reputation_summary,
+        reputation_provenance,
         soul_config: inputs.soul_config,
         adaptation_state: inputs.adaptation_state,
+        reader_warnings,
         generated_at: inputs.generated_at,
     })
 }
@@ -129,6 +183,13 @@ fn severity_rank(severity: WarningSeverity) -> u8 {
         WarningSeverity::Caution => 1,
         WarningSeverity::Important => 2,
         WarningSeverity::Severe => 3,
+    }
+}
+
+fn unavailable_if_missing(provenance: InputProvenance, fallback_detail: &str) -> InputProvenance {
+    match provenance.source {
+        InputSourceKind::Unavailable => provenance,
+        _ => InputProvenance::unavailable(fallback_detail),
     }
 }
 

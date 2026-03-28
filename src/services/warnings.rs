@@ -11,11 +11,15 @@ impl WarningService {
         normalized: &NormalizedInputs,
         compose_mode: ComposeMode,
     ) -> Vec<BehaviorWarning> {
-        let mut warnings = normalized
-            .identity_snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.warnings.clone())
-            .unwrap_or_default();
+        let mut warnings = normalized.reader_warnings.clone();
+
+        warnings.extend(
+            normalized
+                .identity_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.warnings.clone())
+                .unwrap_or_default(),
+        );
 
         if normalized.identity_snapshot.is_none() {
             warnings.push(warning(
@@ -147,8 +151,9 @@ mod tests {
     use chrono::Utc;
 
     use crate::domain::{
-        AdaptationState, BehaviorInputs, ComposeMode, ComposeRequest, RecoveryState,
-        RegistryStatus, SessionIdentitySnapshot, SoulConfig, VerificationResult, WarningSeverity,
+        AdaptationState, BehaviorInputs, BehaviorWarning, ComposeMode, ComposeRequest,
+        RecoveryState, RegistryStatus, SessionIdentitySnapshot, SoulConfig, VerificationResult,
+        WarningSeverity,
     };
     use crate::sources::normalize::normalize_inputs;
 
@@ -184,6 +189,11 @@ mod tests {
                     reason_code: None,
                     verified_at: Some(Utc::now()),
                 }),
+                reader_warnings: vec![BehaviorWarning {
+                    severity: WarningSeverity::Important,
+                    code: "cache_stale".to_owned(),
+                    message: "Cached registry state was stale and bypassed.".to_owned(),
+                }],
                 adaptation_state: AdaptationState::default(),
                 generated_at: Utc::now(),
                 ..BehaviorInputs::default()
@@ -201,5 +211,6 @@ mod tests {
                 .iter()
                 .any(|warning| warning.code == "registry_revoked")
         );
+        assert!(warnings.iter().any(|warning| warning.code == "cache_stale"));
     }
 }

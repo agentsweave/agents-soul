@@ -11,6 +11,12 @@ pub struct ComposeRequest {
     pub workspace_id: String,
     pub agent_id: String,
     pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_snapshot_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_verification_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_reputation_path: Option<String>,
     #[serde(default = "default_true")]
     pub include_reputation: bool,
     #[serde(default = "default_true")]
@@ -26,6 +32,9 @@ impl ComposeRequest {
             workspace_id: ".".to_owned(),
             agent_id,
             session_id: session_id.into(),
+            identity_snapshot_path: None,
+            registry_verification_path: None,
+            registry_reputation_path: None,
             include_reputation: true,
             include_relationships: true,
             include_commitments: true,
@@ -43,6 +52,53 @@ impl ComposeRequest {
             return Err(SoulError::EmptyField("session_id"));
         }
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum InputSourceKind {
+    Explicit,
+    Live,
+    Cache,
+    #[default]
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct InputProvenance {
+    pub source: InputSourceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+impl InputProvenance {
+    pub fn explicit(detail: impl Into<String>) -> Self {
+        Self {
+            source: InputSourceKind::Explicit,
+            detail: Some(detail.into()),
+        }
+    }
+
+    pub fn live(detail: impl Into<String>) -> Self {
+        Self {
+            source: InputSourceKind::Live,
+            detail: Some(detail.into()),
+        }
+    }
+
+    pub fn cache(detail: impl Into<String>) -> Self {
+        Self {
+            source: InputSourceKind::Cache,
+            detail: Some(detail.into()),
+        }
+    }
+
+    pub fn unavailable(detail: impl Into<String>) -> Self {
+        Self {
+            source: InputSourceKind::Unavailable,
+            detail: Some(detail.into()),
+        }
     }
 }
 
@@ -102,13 +158,21 @@ pub struct BehaviorInputs {
     pub schema_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_snapshot: Option<SessionIdentitySnapshot>,
+    #[serde(default)]
+    pub identity_provenance: InputProvenance,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_result: Option<VerificationResult>,
+    #[serde(default)]
+    pub verification_provenance: InputProvenance,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reputation_summary: Option<ReputationSummary>,
+    #[serde(default)]
+    pub reputation_provenance: InputProvenance,
     pub soul_config: SoulConfig,
     #[serde(default)]
     pub adaptation_state: AdaptationState,
+    #[serde(default)]
+    pub reader_warnings: Vec<BehaviorWarning>,
     pub generated_at: DateTime<Utc>,
 }
 
@@ -121,12 +185,20 @@ pub struct NormalizedInputs {
     pub compose_mode_hint: Option<ComposeMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_snapshot: Option<SessionIdentitySnapshot>,
+    #[serde(default)]
+    pub identity_provenance: InputProvenance,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_result: Option<VerificationResult>,
+    #[serde(default)]
+    pub verification_provenance: InputProvenance,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reputation_summary: Option<ReputationSummary>,
+    #[serde(default)]
+    pub reputation_provenance: InputProvenance,
     pub soul_config: SoulConfig,
     pub adaptation_state: AdaptationState,
+    #[serde(default)]
+    pub reader_warnings: Vec<BehaviorWarning>,
     pub generated_at: DateTime<Utc>,
 }
 
@@ -135,10 +207,18 @@ impl Default for BehaviorInputs {
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
             identity_snapshot: None,
+            identity_provenance: InputProvenance::unavailable("identity not requested"),
             verification_result: None,
+            verification_provenance: InputProvenance::unavailable(
+                "registry verification not requested",
+            ),
             reputation_summary: None,
+            reputation_provenance: InputProvenance::unavailable(
+                "registry reputation not requested",
+            ),
             soul_config: SoulConfig::default(),
             adaptation_state: AdaptationState::default(),
+            reader_warnings: Vec::new(),
             generated_at: Utc::now(),
         }
     }

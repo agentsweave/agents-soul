@@ -1,8 +1,9 @@
 use agents_soul::app::config::WorkspacePaths;
 use agents_soul::domain::{
     BehaviorWarning, BehavioralContext, CommunicationStyle, ComposeMode, ComposeRequest,
-    OfflineRegistryBehavior, PersonalityProfile, ProvenanceReport, RecoveryState, RegistryStatus,
-    RevokedBehavior, SoulConfig, SoulLimits, StatusSummary, TemplateConfig, WarningSeverity,
+    InputSourceKind, OfflineRegistryBehavior, PersonalityProfile, ProvenanceReport, RecoveryState,
+    RegistryStatus, RevokedBehavior, SoulConfig, SoulLimits, StatusSummary, TemplateConfig,
+    WarningSeverity,
 };
 
 #[test]
@@ -54,6 +55,9 @@ fn compose_request_defaults_to_full_domain_context() {
 
     assert_eq!(request.workspace_id, ".");
     assert_eq!(request.agent_id, "alpha");
+    assert_eq!(request.identity_snapshot_path, None);
+    assert_eq!(request.registry_verification_path, None);
+    assert_eq!(request.registry_reputation_path, None);
     assert!(request.include_reputation);
     assert!(request.include_relationships);
     assert!(request.include_commitments);
@@ -89,6 +93,9 @@ fn behavioral_context_carries_typed_status_information() {
         provenance: ProvenanceReport {
             identity_fingerprint: Some("abc123".to_owned()),
             registry_verification_at: None,
+            identity_source: InputSourceKind::Live,
+            verification_source: InputSourceKind::Live,
+            reputation_source: InputSourceKind::Live,
             config_hash: "cfg_001".to_owned(),
             adaptation_hash: "adp_001".to_owned(),
             input_hash: "inp_001".to_owned(),
