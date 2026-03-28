@@ -7,9 +7,14 @@ use crate::{
     app::config::WorkspacePaths,
     domain::{
         AdaptationState, CURRENT_SCHEMA_VERSION, CommunicationOverride, HeuristicOverride,
-        PersonalityOverride, SoulError,
+        PersonalityOverride, SoulConfig, SoulError,
     },
     storage::sqlite::{self, AdaptationStateRecord},
+};
+
+use super::{
+    bounds::clamp_trait_delta,
+    overrides::{EffectiveOverrideSet, materialize_effective_overrides},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -72,19 +77,25 @@ impl AdaptiveWriteRequest {
 
     fn normalized_state(
         &self,
+        config: &SoulConfig,
         last_reset_at: Option<DateTime<Utc>>,
     ) -> Result<StoredAdaptationState, SoulError> {
         self.validate()?;
 
         let notes = normalize_notes(self.notes.clone());
-        let heuristic_overrides = normalize_heuristic_overrides(self.heuristic_overrides.clone());
+        let mut heuristic_overrides =
+            normalize_heuristic_overrides(self.heuristic_overrides.clone());
+        heuristic_overrides.truncate(config.limits.max_adaptive_rules);
 
         Ok(StoredAdaptationState {
             agent_id: self.agent_id.clone(),
             adaptation_state: AdaptationState {
                 schema_version: CURRENT_SCHEMA_VERSION,
                 last_updated_at: Some(self.updated_at),
-                trait_overrides: self.trait_overrides.clone(),
+                trait_overrides: clamp_personality_override(
+                    &self.trait_overrides,
+                    config.limits.max_trait_drift,
+                ),
                 communication_overrides: self.communication_overrides.clone(),
                 heuristic_overrides,
                 evidence_window_size: self.evidence_window_size,
@@ -203,8 +214,27 @@ WHERE agent_id = ?1
     .map_err(|error| SoulError::Storage(error.to_string()))
 }
 
+pub fn load_effective_adaptation_state(
+    conn: &Connection,
+    config: &SoulConfig,
+    agent_id: &str,
+) -> Result<EffectiveOverrideSet, SoulError> {
+    let stored = load_stored_adaptation_state(conn, agent_id)?;
+    Ok(materialize_effective_overrides(config, stored.as_ref()))
+}
+
+pub fn read_workspace_effective_overrides(
+    workspace_root: impl AsRef<Path>,
+    config: &SoulConfig,
+    agent_id: &str,
+) -> Result<EffectiveOverrideSet, SoulError> {
+    let stored = read_workspace_adaptation_state(workspace_root, agent_id)?;
+    Ok(materialize_effective_overrides(config, stored.as_ref()))
+}
+
 pub fn persist_adaptation_write(
     conn: &Connection,
+    config: &SoulConfig,
     request: &AdaptiveWriteRequest,
 ) -> Result<AdaptiveWriteResult, SoulError> {
     if !request.persist {
@@ -216,8 +246,10 @@ pub fn persist_adaptation_write(
     }
 
     let existing = load_stored_adaptation_state(conn, &request.agent_id)?;
-    let candidate =
-        request.normalized_state(existing.as_ref().and_then(|state| state.last_reset_at))?;
+    let candidate = request.normalized_state(
+        config,
+        existing.as_ref().and_then(|state| state.last_reset_at),
+    )?;
 
     if existing
         .as_ref()
@@ -241,6 +273,16 @@ pub fn persist_adaptation_write(
     })
 }
 
+pub fn persist_workspace_adaptation_write(
+    workspace_root: impl AsRef<Path>,
+    config: &SoulConfig,
+    request: &AdaptiveWriteRequest,
+) -> Result<AdaptiveWriteResult, SoulError> {
+    let db_path = WorkspacePaths::new(workspace_root.as_ref().to_path_buf()).adaptation_db_path();
+    let conn = sqlite::open_database(db_path)?;
+    persist_adaptation_write(&conn, config, request)
+}
+
 fn normalize_notes(mut notes: Vec<String>) -> Vec<String> {
     notes.retain(|note| !note.trim().is_empty());
     notes.sort();
@@ -257,6 +299,22 @@ fn normalize_heuristic_overrides(overrides: Vec<HeuristicOverride>) -> Vec<Heuri
         by_id.insert(override_rule.heuristic_id.clone(), override_rule);
     }
     by_id.into_values().collect()
+}
+
+fn clamp_personality_override(
+    override_set: &PersonalityOverride,
+    max_trait_drift: f32,
+) -> PersonalityOverride {
+    PersonalityOverride {
+        openness: clamp_trait_delta(override_set.openness, max_trait_drift),
+        conscientiousness: clamp_trait_delta(override_set.conscientiousness, max_trait_drift),
+        initiative: clamp_trait_delta(override_set.initiative, max_trait_drift),
+        directness: clamp_trait_delta(override_set.directness, max_trait_drift),
+        warmth: clamp_trait_delta(override_set.warmth, max_trait_drift),
+        risk_tolerance: clamp_trait_delta(override_set.risk_tolerance, max_trait_drift),
+        verbosity: clamp_trait_delta(override_set.verbosity, max_trait_drift),
+        formality: clamp_trait_delta(override_set.formality, max_trait_drift),
+    }
 }
 
 fn deserialize_json<T>(raw: &str) -> Result<T, rusqlite::Error>
@@ -302,8 +360,9 @@ fn read_u32_column(value: i64, field: &str) -> Result<u32, rusqlite::Error> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AdaptiveWriteEffect, AdaptiveWriteRequest, load_stored_adaptation_state,
-        persist_adaptation_write,
+        AdaptiveWriteEffect, AdaptiveWriteRequest, load_effective_adaptation_state,
+        load_stored_adaptation_state, persist_adaptation_write, persist_workspace_adaptation_write,
+        read_workspace_effective_overrides,
     };
     use crate::{
         app::config::WorkspacePaths,
@@ -327,7 +386,8 @@ mod tests {
         let conn = Connection::open_in_memory()?;
         initialize_database(&conn)?;
 
-        let result = persist_adaptation_write(&conn, &sample_write(false, 0)?)?;
+        let config = sample_config();
+        let result = persist_adaptation_write(&conn, &config, &sample_write(false, 0)?)?;
 
         assert_eq!(result.effect, AdaptiveWriteEffect::SessionOnly);
         assert!(result.stored_state.is_none());
@@ -342,9 +402,10 @@ mod tests {
 
         let first = sample_write(true, 0)?;
         let second = sample_write(true, 0)?;
+        let config = sample_config();
 
-        let inserted = persist_adaptation_write(&conn, &first)?;
-        let unchanged = persist_adaptation_write(&conn, &second)?;
+        let inserted = persist_adaptation_write(&conn, &config, &first)?;
+        let unchanged = persist_adaptation_write(&conn, &config, &second)?;
         let stored = load_stored_adaptation_state(&conn, "agent.alpha")?
             .ok_or_else(|| io::Error::other("missing stored adaptation state"))?;
 
@@ -380,15 +441,16 @@ mod tests {
             notes: vec!["New signal".to_owned()],
             ..sample_write(true, 10)?
         };
+        let config = sample_config();
 
-        let inserted = persist_adaptation_write(&conn, &first)?;
+        let inserted = persist_adaptation_write(&conn, &config, &first)?;
         let mut seeded = inserted
             .stored_state
             .ok_or_else(|| io::Error::other("missing stored state after insert"))?;
         seeded.last_reset_at = Some(test_timestamp(2026, 3, 29, 1, 5, 0)?);
         crate::storage::sqlite::upsert_adaptation_state(&conn, &seeded.to_record()?)?;
 
-        let updated = persist_adaptation_write(&conn, &second)?;
+        let updated = persist_adaptation_write(&conn, &config, &second)?;
         let stored = load_stored_adaptation_state(&conn, "agent.alpha")?
             .ok_or_else(|| io::Error::other("missing stored adaptation state"))?;
 
@@ -419,7 +481,8 @@ mod tests {
         let conn = crate::storage::sqlite::open_database(&db_path)?;
 
         let write = sample_write(true, 0)?;
-        persist_adaptation_write(&conn, &write)?;
+        let config = sample_config();
+        persist_adaptation_write(&conn, &config, &write)?;
 
         let stored = super::read_workspace_adaptation_state(&workspace, "agent.alpha")?
             .ok_or_else(|| io::Error::other("missing stored adaptation state"))?;
@@ -432,6 +495,108 @@ mod tests {
         );
         cleanup_workspace(&workspace)?;
         Ok(())
+    }
+
+    #[test]
+    fn effective_state_load_clamps_drift_and_rule_count() -> Result<(), Box<dyn Error>> {
+        let conn = Connection::open_in_memory()?;
+        initialize_database(&conn)?;
+        let mut config = sample_config();
+        config.limits.max_trait_drift = 0.05;
+        config.limits.max_adaptive_rules = 1;
+        config.adaptation.min_interactions_for_adapt = 1;
+
+        let write = AdaptiveWriteRequest {
+            trait_overrides: PersonalityOverride {
+                verbosity: 0.20,
+                warmth: -0.20,
+                ..PersonalityOverride::default()
+            },
+            heuristic_overrides: vec![
+                HeuristicOverride {
+                    heuristic_id: "zeta".to_owned(),
+                    priority_delta: 2,
+                    enabled: Some(true),
+                    replacement_instruction: None,
+                    note: None,
+                },
+                HeuristicOverride {
+                    heuristic_id: "alpha".to_owned(),
+                    priority_delta: 1,
+                    enabled: Some(true),
+                    replacement_instruction: None,
+                    note: None,
+                },
+            ],
+            ..sample_write(true, 0)?
+        };
+
+        persist_adaptation_write(&conn, &config, &write)?;
+        let effective = load_effective_adaptation_state(&conn, &config, "agent.alpha")?;
+
+        assert_eq!(effective.adaptation_state.trait_overrides.verbosity, 0.05);
+        assert_eq!(effective.adaptation_state.trait_overrides.warmth, -0.05);
+        assert_eq!(effective.adaptation_state.heuristic_overrides.len(), 1);
+        assert_eq!(
+            effective.adaptation_state.heuristic_overrides[0].heuristic_id,
+            "alpha"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_persist_and_effective_read_share_bounded_state() -> Result<(), Box<dyn Error>> {
+        let workspace = test_workspace("workspace-effective");
+        fs::create_dir_all(&workspace)?;
+        let mut config = sample_config();
+        config.limits.max_trait_drift = 0.04;
+        config.limits.max_adaptive_rules = 1;
+        config.adaptation.min_interactions_for_adapt = 1;
+
+        let write = AdaptiveWriteRequest {
+            trait_overrides: PersonalityOverride {
+                verbosity: -0.20,
+                ..PersonalityOverride::default()
+            },
+            heuristic_overrides: vec![
+                HeuristicOverride {
+                    heuristic_id: "zeta".to_owned(),
+                    priority_delta: 2,
+                    enabled: Some(true),
+                    replacement_instruction: None,
+                    note: None,
+                },
+                HeuristicOverride {
+                    heuristic_id: "alpha".to_owned(),
+                    priority_delta: 1,
+                    enabled: Some(true),
+                    replacement_instruction: None,
+                    note: None,
+                },
+            ],
+            ..sample_write(true, 0)?
+        };
+
+        persist_workspace_adaptation_write(&workspace, &config, &write)?;
+        let stored = super::read_workspace_adaptation_state(&workspace, "agent.alpha")?
+            .ok_or_else(|| io::Error::other("missing stored adaptation state"))?;
+        let effective = read_workspace_effective_overrides(&workspace, &config, "agent.alpha")?;
+
+        assert_eq!(stored.adaptation_state.trait_overrides.verbosity, -0.04);
+        assert_eq!(stored.adaptation_state.heuristic_overrides.len(), 1);
+        assert_eq!(effective.adaptation_state.trait_overrides.verbosity, -0.04);
+        assert_eq!(effective.adaptation_state.heuristic_overrides.len(), 1);
+
+        cleanup_workspace(&workspace)?;
+        Ok(())
+    }
+
+    fn sample_config() -> crate::domain::SoulConfig {
+        crate::domain::SoulConfig {
+            agent_id: "agent.alpha".to_owned(),
+            profile_name: "Alpha".to_owned(),
+            ..crate::domain::SoulConfig::default()
+        }
     }
 
     fn sample_write(

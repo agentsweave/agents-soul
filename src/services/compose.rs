@@ -1,7 +1,7 @@
 use std::time::SystemTime;
 
 use crate::{
-    adaptation::{materialize_effective_overrides, read_workspace_adaptation_state},
+    adaptation::read_workspace_effective_overrides,
     app::config::{WorkspacePaths, load_soul_config},
     domain::{
         BehaviorInputs, BehavioralContext, CURRENT_SCHEMA_VERSION, ComposeMode, ComposeRequest,
@@ -25,10 +25,8 @@ impl ComposeService {
     pub fn compose(&self, request: ComposeRequest) -> Result<BehavioralContext, ServiceError> {
         request.validate()?;
         let config = load_config_for_request(&request)?;
-        let stored_adaptation =
-            read_workspace_adaptation_state(&request.workspace_id, &request.agent_id)?;
         let effective_overrides =
-            materialize_effective_overrides(&config, stored_adaptation.as_ref());
+            read_workspace_effective_overrides(&request.workspace_id, &config, &request.agent_id)?;
 
         let identity_reader = IdentityReader;
         let registry_reader = RegistryReader;
