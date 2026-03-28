@@ -4356,3 +4356,209 @@ async fn compose_full_prompt_fails_closed_when_registry_revoked() {
     assert!(matches!(err, SoulError::RegistryBlocked { .. }));
 }
 ```
+
+---
+
+## 60. Canonical Foundation Freeze and Execution Order
+
+This section is the implementation baseline for the foundation work. It supersedes
+older planning variants where they disagree. The repo already has the crate skeleton,
+so the remaining job is to consolidate around one runtime contract rather than invent
+additional layouts.
+
+### 60.1 What is frozen now
+
+- One agent, one session, one compose request remains the root contract.
+- CLI, REST, and MCP stay thin transport surfaces over one inner compose service.
+- `agents-soul` remains behavior-only. It does not discover principals, issue identity,
+  or override registry truth.
+- Determinism is mandatory: same normalized inputs must yield the same
+  `BehavioralContext`.
+
+### 60.2 Canonical module ownership
+
+The current scaffold should converge on this ownership model:
+
+- `src/app/config.rs`: workspace path semantics and config-loading entry points
+- `src/app/deps.rs`: dependency container and service-facing traits
+- `src/app/hash.rs`: stable hashing helpers for provenance and cache keys
+- `src/domain/config.rs`: `SoulConfig`, defaults, validation, template identifiers
+- `src/domain/inputs.rs`: `ComposeRequest`, upstream snapshots, raw loaded inputs,
+  normalized input bundle
+- `src/domain/status.rs`: `ComposeMode`, registry/identity status enums,
+  `StatusSummary`
+- `src/domain/behavioral_context.rs`: `BehavioralContext`, warnings, output contract
+- `src/domain/provenance.rs`: `ProvenanceReport`
+- `src/domain/errors.rs`: canonical `SoulError`
+- `src/sources/*`: disk/HTTP readers plus normalization helpers
+- `src/services/compose.rs`: the only orchestration entry point for full composition
+- `src/services/*`: pure behavior derivation and rendering helpers
+- `src/cli/*`, `src/api/*`, `src/mcp/*`: transport adapters only
+
+The following files are draft duplicates and should be folded into the canonical
+modules above instead of becoming parallel contracts:
+
+- `src/domain/compose.rs`
+- `src/domain/context.rs`
+- `src/readers/`
+
+If a type is needed by more than one layer, it belongs in `src/domain/*`, not in a
+transport module.
+
+### 60.3 Canonical runtime pipeline
+
+Foundation implementation should center on one service entry point:
+
+```rust
+pub async fn compose_context(
+    deps: &AppDeps,
+    req: ComposeRequest,
+) -> Result<BehavioralContext, SoulError>;
+```
+
+Its steps are fixed:
+
+1. Validate the `ComposeRequest`.
+2. Load and validate `soul.toml`.
+3. Load adaptive state from `.soul/`.
+4. Read upstream identity and registry inputs through `src/sources/*`.
+5. Normalize those inputs into one stable bundle.
+6. Resolve the legal `ComposeMode`.
+7. Derive profile, rules, warnings, and provenance.
+8. Render the final `BehavioralContext`.
+
+No transport layer may skip, reorder, or partially reimplement these steps.
+
+### 60.4 Canonical type placement
+
+To remove the current duplication, foundation work should freeze these rules:
+
+- There is one `ComposeRequest`, and it lives in `src/domain/inputs.rs`.
+- There is one `ComposeMode`, and it lives in `src/domain/status.rs`.
+- There is one `BehavioralContext`, and it lives in
+  `src/domain/behavioral_context.rs`.
+- There is one `StatusSummary`, and it lives in `src/domain/status.rs`.
+- There is one `ProvenanceReport`, and it lives in `src/domain/provenance.rs`.
+- `src/domain/mod.rs` re-exports those canonical types; other draft definitions are
+  migration leftovers and should be removed after callers move.
+
+### 60.5 Compose-mode resolution rules
+
+The ambiguity around degradation is now frozen to this precedence order:
+
+1. `registry = revoked` -> `ComposeMode::FailClosed`
+2. `registry = suspended` -> `ComposeMode::Restricted`
+3. `registry = active` + `identity = healthy` -> `ComposeMode::Normal`
+4. `registry = active` + `identity = degraded` -> `ComposeMode::Degraded`
+5. `registry = active` + `identity` unreadable or absent -> `ComposeMode::BaselineOnly`
+6. `registry` unavailable + identity present -> `ComposeMode::Degraded`
+7. `registry` unavailable + identity unreadable or absent -> `ComposeMode::BaselineOnly`
+8. Parsed but semantically broken required identity input -> `SoulError::RequiredInputsBroken`
+
+This resolves the earlier contradiction:
+
+- missing upstream data is degradable or baseline-only
+- corrupt required data is explicit failure
+- revoked standing is not a transport error; it is a first-class fail-closed outcome
+
+### 60.6 Error taxonomy baseline
+
+`SoulError` should stay centralized and transport-agnostic. The minimum stable buckets
+for the foundation layer are:
+
+- local config invalid or missing
+- request validation failure
+- upstream unavailable but degradable
+- upstream broken or semantically unusable
+- fail-closed standing
+- storage failure
+- template/render failure
+- internal/runtime failure
+
+Transport mapping should stay outside the domain layer, but foundation work must make
+the mapping straightforward:
+
+- validation -> CLI exit `2`
+- degradable upstream unavailable -> CLI exit `3`
+- fail-closed standing -> CLI exit `4`
+- local config invalid -> CLI exit `5`
+- storage failure -> CLI exit `6`
+- unexpected internal failure -> CLI exit `7`
+
+REST and MCP should encode the same distinctions instead of collapsing them into one
+generic error.
+
+### 60.7 Workspace, cache, and template decisions
+
+The workspace contract is intentionally small:
+
+```text
+<workspace>/
+  soul.toml
+  .soul/
+    patterns.sqlite
+    adaptation_log.jsonl
+```
+
+Foundation does not require `.soul/context_cache.json` as a contract file. If caching is
+added later, it is disposable implementation detail only:
+
+- cache miss must never change behavior
+- cache corruption must never block composition
+- cache contents are never authority
+
+Template packaging is frozen to on-disk repo templates for v1:
+
+- `templates/prompt_prefix.j2`
+- `templates/context_full.j2`
+- `templates/explain.j2`
+
+`SoulConfig.templates.*` should continue to use logical template identifiers such as
+`prompt-prefix`, `full-context`, and `explain`; the template service owns the mapping
+from logical identifier to on-disk file.
+
+### 60.8 App dependency container baseline
+
+`AppDeps` should become the single construction point for the inner runtime. The
+foundation slice only needs interfaces for:
+
+- config loading
+- identity reading
+- registry reading
+- adaptive-state loading
+- template rendering
+- clock / timestamp generation
+- hashing / stable serialization helpers
+
+This keeps transports from constructing behavior logic ad hoc.
+
+### 60.9 Execution-ready bead order
+
+The next implementation passes should follow this order and avoid reopening settled
+foundation questions:
+
+1. `soul-1ip.2`
+   Freeze `soul.toml` loading, validation, workspace path rules, logical template ids,
+   and the `.soul/` contract described above.
+2. `soul-1ip.3`
+   Centralize `SoulError`, define the real `AppDeps` shape, and make transport mapping
+   a downstream concern rather than a domain concern.
+3. `soul-1ip.4`
+   Add tracing bootstrap, stable hashing, and deterministic ordering helpers.
+4. `soul-5k8.1`, `soul-5k8.2`, `soul-5k8.3`
+   Consolidate the duplicated domain contracts into the canonical file ownership model
+   above. Do not keep parallel definitions alive.
+5. `soul-f5v` / `soul-2i7.*`
+   Implement source readers and normalization against the frozen input and status types.
+6. `soul-3l6.*`
+   Implement compose-mode resolution and orchestration in `src/services/compose.rs`.
+7. `soul-29t.*`
+   Wire CLI, REST, and MCP once the inner compose path is stable.
+
+### 60.10 Stop rules for follow-on implementation
+
+- Do not add new top-level module families for the same concerns.
+- Do not put request, status, or error contracts in transport modules.
+- Do not make cache or templates authoritative.
+- Do not bypass `ComposeMode` resolution in order to “just render something”.
+- Do not let revoked standing fall through to normal rendering.
