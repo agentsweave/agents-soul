@@ -4,11 +4,15 @@ use crate::{
     adaptation::{materialize_effective_overrides, read_workspace_adaptation_state},
     app::config::{WorkspacePaths, load_soul_config},
     domain::{
-        BehaviorInputs, BehaviorWarning, BehavioralContext, CURRENT_SCHEMA_VERSION, ComposeMode,
-        ComposeRequest, NormalizedInputs, RegistryStatus, SoulConfig, StatusSummary,
-        WarningSeverity,
+        BehaviorInputs, BehavioralContext, CURRENT_SCHEMA_VERSION, ComposeMode, ComposeRequest,
+        NormalizedInputs, SoulConfig, StatusSummary,
     },
-    services::provenance::ProvenanceService,
+    services::{
+        commitments::CommitmentsService, communication::CommunicationRulesService,
+        decision_rules::DecisionRulesService, limits::ComposeModeService,
+        profile::EffectiveProfileService, provenance::ProvenanceService,
+        relationships::RelationshipsService, warnings::WarningService,
+    },
     sources::{identity::IdentityReader, normalize::normalize_inputs, registry::RegistryReader},
 };
 
@@ -25,10 +29,6 @@ impl ComposeService {
             read_workspace_adaptation_state(&request.workspace_id, &request.agent_id)?;
         let effective_overrides =
             materialize_effective_overrides(&config, stored_adaptation.as_ref());
-        let mut effective_config = config.clone();
-        effective_config.trait_baseline = effective_overrides.trait_profile;
-        effective_config.communication_style = effective_overrides.communication_style;
-        effective_config.decision_heuristics = effective_overrides.decision_heuristics;
 
         let identity_reader = IdentityReader;
         let registry_reader = RegistryReader;
@@ -56,7 +56,7 @@ impl ComposeService {
                 identity_snapshot,
                 verification_result,
                 reputation_summary,
-                soul_config: effective_config,
+                soul_config: config,
                 adaptation_state: effective_overrides.adaptation_state,
                 generated_at: SystemTime::UNIX_EPOCH.into(),
             },
@@ -66,52 +66,59 @@ impl ComposeService {
     }
 
     fn build_context(&self, normalized: NormalizedInputs) -> BehavioralContext {
-        let agent_id = normalized.agent_id.clone();
+        let compose_mode = ComposeModeService.resolve(&normalized);
+        let status_summary = ComposeModeService.build_status_summary(&normalized, compose_mode);
+
+        match compose_mode {
+            ComposeMode::FailClosed => self.build_fail_closed_context(normalized, status_summary),
+            ComposeMode::Restricted => self.build_restricted_context(normalized, status_summary),
+            _ => self.render_context(normalized, status_summary, compose_mode),
+        }
+    }
+
+    fn build_fail_closed_context(
+        &self,
+        normalized: NormalizedInputs,
+        status_summary: StatusSummary,
+    ) -> BehavioralContext {
+        self.render_context(normalized, status_summary, ComposeMode::FailClosed)
+    }
+
+    fn build_restricted_context(
+        &self,
+        normalized: NormalizedInputs,
+        status_summary: StatusSummary,
+    ) -> BehavioralContext {
+        self.render_context(normalized, status_summary, ComposeMode::Restricted)
+    }
+
+    fn render_context(
+        &self,
+        normalized: NormalizedInputs,
+        status_summary: StatusSummary,
+        compose_mode: ComposeMode,
+    ) -> BehavioralContext {
         let profile_name = normalized.profile_name.clone();
-        let status_summary = build_status_summary(&normalized);
-        let warnings = build_warnings(&normalized, &status_summary);
-        let provenance = ProvenanceService.build(&normalized);
+        let prompt_prefix = ComposeModeService.prompt_prefix(
+            compose_mode,
+            &profile_name,
+            normalized.soul_config.limits.max_prompt_prefix_chars,
+        );
 
         BehavioralContext {
             schema_version: CURRENT_SCHEMA_VERSION,
-            agent_id,
+            agent_id: normalized.agent_id.clone(),
             profile_name,
-            status_summary: status_summary.clone(),
-            trait_profile: normalized.soul_config.trait_baseline.clone(),
-            communication_rules: build_communication_rules(&normalized),
-            decision_rules: normalized
-                .soul_config
-                .decision_heuristics
-                .iter()
-                .filter(|heuristic| heuristic.enabled)
-                .map(|heuristic| heuristic.instruction.clone())
-                .collect(),
-            active_commitments: normalized
-                .identity_snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.active_commitments.clone())
-                .unwrap_or_default(),
-            relationship_context: normalized
-                .identity_snapshot
-                .as_ref()
-                .map(|snapshot| {
-                    snapshot
-                        .relationship_markers
-                        .iter()
-                        .map(|marker| match &marker.note {
-                            Some(note) => format!("{}:{} ({note})", marker.subject, marker.marker),
-                            None => format!("{}:{}", marker.subject, marker.marker),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
+            status_summary,
+            trait_profile: EffectiveProfileService.derive(&normalized, compose_mode),
+            communication_rules: CommunicationRulesService.derive(&normalized, compose_mode),
+            decision_rules: DecisionRulesService.derive(&normalized, compose_mode),
+            active_commitments: CommitmentsService.derive(&normalized),
+            relationship_context: RelationshipsService.derive(&normalized),
             adaptive_notes: normalized.adaptation_state.notes.clone(),
-            warnings,
-            system_prompt_prefix: build_prompt_prefix(
-                &status_summary,
-                &normalized.soul_config.profile_name,
-            ),
-            provenance,
+            warnings: WarningService.derive(&normalized, compose_mode),
+            system_prompt_prefix: prompt_prefix,
+            provenance: ProvenanceService.build(&normalized),
         }
     }
 }
@@ -127,138 +134,6 @@ fn load_config_for_request(request: &ComposeRequest) -> Result<SoulConfig, Servi
         profile_name: request.agent_id.clone(),
         ..SoulConfig::default()
     })
-}
-
-fn build_status_summary(normalized: &NormalizedInputs) -> StatusSummary {
-    StatusSummary {
-        compose_mode: normalized
-            .compose_mode_hint
-            .unwrap_or(ComposeMode::BaselineOnly),
-        identity_loaded: normalized.identity_snapshot.is_some(),
-        registry_verified: normalized.verification_result.is_some(),
-        registry_status: normalized
-            .verification_result
-            .as_ref()
-            .map(|verification| verification.status),
-        reputation_loaded: normalized.reputation_summary.is_some(),
-        recovery_state: normalized
-            .identity_snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.recovery_state),
-    }
-}
-
-fn build_warnings(
-    normalized: &NormalizedInputs,
-    status_summary: &StatusSummary,
-) -> Vec<BehaviorWarning> {
-    let mut warnings = normalized
-        .identity_snapshot
-        .as_ref()
-        .map(|snapshot| snapshot.warnings.clone())
-        .unwrap_or_default();
-
-    if normalized.identity_snapshot.is_none() {
-        warnings.push(BehaviorWarning {
-            severity: WarningSeverity::Caution,
-            code: "identity_unavailable".to_owned(),
-            message: "Identity snapshot is unavailable; using baseline-only identity context."
-                .to_owned(),
-        });
-    }
-
-    if normalized.verification_result.is_none() {
-        warnings.push(BehaviorWarning {
-            severity: WarningSeverity::Important,
-            code: "registry_unavailable".to_owned(),
-            message:
-                "Registry verification is unavailable; composition is operating under offline policy."
-                    .to_owned(),
-        });
-    }
-
-    if normalized.request.include_reputation && normalized.reputation_summary.is_none() {
-        warnings.push(BehaviorWarning {
-            severity: WarningSeverity::Info,
-            code: "reputation_unavailable".to_owned(),
-            message: "Registry reputation data is unavailable; reputation shaping was omitted."
-                .to_owned(),
-        });
-    }
-
-    match status_summary.registry_status {
-        Some(RegistryStatus::Suspended) => warnings.push(BehaviorWarning {
-            severity: WarningSeverity::Severe,
-            code: "registry_suspended".to_owned(),
-            message: "Registry standing is suspended; autonomous behavior must be restricted."
-                .to_owned(),
-        }),
-        Some(RegistryStatus::Revoked) => warnings.push(BehaviorWarning {
-            severity: WarningSeverity::Severe,
-            code: "registry_revoked".to_owned(),
-            message: "Registry standing is revoked; fail closed and escalate to the operator."
-                .to_owned(),
-        }),
-        _ => {}
-    }
-
-    warnings.sort_by(|left, right| {
-        (
-            warning_rank(left.severity),
-            left.code.as_str(),
-            left.message.as_str(),
-        )
-            .cmp(&(
-                warning_rank(right.severity),
-                right.code.as_str(),
-                right.message.as_str(),
-            ))
-    });
-    warnings.dedup_by(|left, right| {
-        left.severity == right.severity && left.code == right.code && left.message == right.message
-    });
-    warnings
-}
-
-fn build_communication_rules(normalized: &NormalizedInputs) -> Vec<String> {
-    let style = &normalized.soul_config.communication_style;
-
-    vec![
-        format!("Default register: {:?}", style.default_register),
-        format!("Paragraph budget: {:?}", style.paragraph_budget),
-        format!("Question style: {:?}", style.question_style),
-        format!("Uncertainty style: {:?}", style.uncertainty_style),
-        format!("Feedback style: {:?}", style.feedback_style),
-        format!("Conflict style: {:?}", style.conflict_style),
-    ]
-}
-
-fn build_prompt_prefix(status_summary: &StatusSummary, profile_name: &str) -> String {
-    match status_summary.compose_mode {
-        ComposeMode::FailClosed => {
-            "Registry standing is revoked. Do not operate normally; escalate to the operator."
-                .to_owned()
-        }
-        ComposeMode::Restricted => {
-            "Operate in restricted mode. Ask for operator confirmation before risky or autonomous actions.".to_owned()
-        }
-        ComposeMode::Degraded => {
-            "Operate cautiously. Some upstream identity or registry inputs are unavailable or degraded.".to_owned()
-        }
-        ComposeMode::BaselineOnly => {
-            format!("Use the baseline soul profile for {profile_name}; identity-derived context is unavailable.")
-        }
-        ComposeMode::Normal => format!("You are {profile_name}. Follow the configured soul profile."),
-    }
-}
-
-fn warning_rank(severity: WarningSeverity) -> u8 {
-    match severity {
-        WarningSeverity::Info => 0,
-        WarningSeverity::Caution => 1,
-        WarningSeverity::Important => 2,
-        WarningSeverity::Severe => 3,
-    }
 }
 
 #[cfg(test)]
@@ -338,17 +213,25 @@ mod tests {
         assert_eq!(
             context.communication_rules,
             vec![
-                "Default register: ProfessionalDirect".to_owned(),
-                "Paragraph budget: Long".to_owned(),
-                "Question style: SingleClarifierWhenNeeded".to_owned(),
-                "Uncertainty style: ExplicitAndBounded".to_owned(),
-                "Feedback style: Frank".to_owned(),
-                "Conflict style: FirmRespectful".to_owned(),
+                "Call out degraded or missing upstream context before acting on uncertain assumptions."
+                    .to_owned(),
+                "Reduce autonomous initiative until identity and registry inputs are healthy again."
+                    .to_owned(),
+                "Use a professional-direct register.".to_owned(),
+                "Keep responses within a long paragraph budget.".to_owned(),
+                "Questions: ask a single clarifying question only when needed.".to_owned(),
+                "Uncertainty: state uncertainty explicitly and keep it bounded.".to_owned(),
+                "Feedback: be frank.".to_owned(),
+                "Conflict handling: stay firm and respectful.".to_owned(),
             ]
         );
         assert_eq!(
             context.decision_rules,
-            vec!["Use adapted risk review.".to_owned()]
+            vec![
+                "Prefer reversible actions and verification steps while upstream context is degraded."
+                    .to_owned(),
+                "Use adapted risk review.".to_owned()
+            ]
         );
         assert_eq!(
             context.adaptive_notes,
