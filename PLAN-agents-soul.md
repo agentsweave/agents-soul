@@ -3,25 +3,27 @@
 ## 1. Project Vision
 
 `agents-soul` is the personality and behavioral layer of the `agents-world` ecosystem.
-It answers the question: **"How should I act, speak, and make decisions?"**
+It answers the question: **"Given who I am locally and whether the registry says I am in
+good standing, how should I act, speak, and make decisions?"**
 
-Where `agents-identify` owns the factual answer to "who am I", `agents-soul` owns the
-experiential answer to "how do I show up." It translates raw identity data — commitments,
-preferences, relationship markers, reputation — into a living behavioral persona that
-colors every interaction an agent has.
+Where `agents-identify` owns the local credential and continuity record, `agents-soul`
+owns the experiential answer to "how do I show up." It translates verified upstream data
+such as commitments, preferences, relationship markers, and registry standing into a
+living behavioral persona that colors every interaction an agent has.
 
 A soul is not a static configuration file. It is a dynamic composition of traits,
 communication styles, decision heuristics, and adaptive patterns that evolve as the
-agent accumulates experience. It reads from `agents-identify` and `agents-registry`
-and produces a **behavioral context** that Claude or any other LLM uses to steer
-its responses.
+agent accumulates experience. It reads from `agents-identify` and `agents-registry`,
+but it never overrules either of them. It produces a **behavioral context** that Claude
+or any other LLM uses to steer its responses.
 
 This project exposes two interfaces:
 
 - **MCP server** — the primary interface for agents and Claude sessions
 - **CLI** — for human operators to inspect, configure, and debug soul state
 
-There is no web UI in v1. The CLI is sufficient for human operators.
+There is no shared cross-repo console. If this repo needs a UI later, that UI belongs
+inside this repo. For v1, the CLI is sufficient for human operators.
 
 ---
 
@@ -30,10 +32,10 @@ There is no web UI in v1. The CLI is sufficient for human operators.
 ```
 agents-world
   ├── agents-identify
-  │     provides: who I am (anchor, memory, commitments, preferences)
+  │     provides: local credential context, memory, commitments, preferences
   │
   ├── agents-registry
-  │     provides: global status, reputation score
+  │     provides: official status, verification result, reputation score
   │
   └── agents-soul   ← THIS PROJECT
         reads: agents-identify snapshot + agents-registry reputation
@@ -50,8 +52,37 @@ agents-soul ──reads──→ agents-registry (reputation, peer trust)
 agents-soul ──produces──→ BehavioralContext (consumed by Claude prompt)
 ```
 
-`agents-soul` is a consumer, not a producer of identity. It must never write to
-`agents-identify` workspaces. It reads, synthesizes, and outputs behavioral guidance.
+`agents-soul` is a consumer, not a producer of identity. It must never redefine
+registration, never declare a revoked credential valid, and never write canonical
+identity facts back into `agents-identify`. It reads, synthesizes, and outputs
+behavioral guidance.
+
+### Real-world analogy
+
+In real-world terms, `agents-soul` is the agent's **personality and way of showing up**.
+It is not the passport office, and it is not the wallet. It is the layer that determines
+how a valid identity expresses itself in tone, judgment, and behavior.
+
+- If `agents-identify` answers: "who am I?"
+- And `agents-registry` answers: "am I recognized and in good standing?"
+- Then `agents-soul` answers: "how should I act, speak, and decide?"
+
+### Boundary rule
+
+`agents-soul` is the only project allowed to own the agent's behavioral layer. It may
+read identity and registry signals, but it must never become the source of truth for
+identity validity or registration.
+
+It is responsible for:
+
+- personality traits
+- communication style
+- decision heuristics
+- adaptive behavioral patterns
+- rendered behavioral context for runtime use
+
+It may synthesize behavior from upstream inputs, but it must not mutate the canonical
+identity record held by `agents-identify`.
 
 ---
 
@@ -59,14 +90,16 @@ agents-soul ──produces──→ BehavioralContext (consumed by Claude prompt
 
 A language model without behavioral context is a blank slate. Every session starts with
 the same default personality. Two agents working in the same repository are
-indistinguishable in how they communicate, decide, and prioritize.
+indistinguishable in how they communicate, decide, and prioritize, even if they carry
+different credentials and different registry standing.
 
 `agents-soul` solves this by composing a rich behavioral context from:
 
 1. **Identity signals** — what the agent knows about itself (from agents-identify)
-2. **Reputation signals** — how the agent is perceived by peers (from agents-registry)
-3. **Soul configuration** — explicit personality traits defined by the human owner
-4. **Adaptive patterns** — behavioral patterns that have emerged from prior interactions
+2. **Registry signals** — whether the credential is active, degraded, suspended, or revoked
+3. **Reputation signals** — how the agent is perceived by peers (from agents-registry)
+4. **Soul configuration** — explicit personality traits defined by the human owner
+5. **Adaptive patterns** — behavioral patterns that have emerged from prior interactions
 
 The output is a `BehavioralContext` — a structured document that Claude injects into
 its system prompt or uses as primary context on session start.
@@ -1367,3 +1400,2442 @@ Done when: all acceptance criteria pass.
 11. `tests/compose.rs` — compose with fixture data
 
 Do not start adaptation or MCP until the composition pipeline produces correct output.
+
+---
+
+## 23. Final Boundary and Authority Contract
+
+This section freezes the final worldview for `agents-soul`.
+
+### 23.1 Boundary statement
+
+`agents-soul` owns behavior only.
+
+It owns:
+
+- trait baselines
+- communication style
+- decision heuristics
+- adaptation rules
+- rendered behavioral context
+
+It does not own:
+
+- official identity validity
+- enrollment or revocation
+- private key custody
+- claim.lock or write.lock
+- local commitment truth
+
+### 23.2 Inputs and outputs
+
+Inputs:
+
+- local identity snapshot from `agents-identify`
+- registry verification result from `agents-registry`
+- reputation summary from `agents-registry`
+- soul config and adaptation history from this repo
+
+Outputs:
+
+- `BehavioralContext`
+- `SystemPromptPrefix`
+- `BehaviorDecisionHints`
+
+### 23.3 Final real-world analogy
+
+Real-world mapping:
+
+- `agents-identify` is the wallet and life file
+- `agents-registry` is the identity authority
+- `agents-soul` is the person's personality and style of action
+
+### 23.4 Hard prohibitions
+
+`agents-soul` must never:
+
+- claim a revoked identity is usable
+- invent a registry success when none exists
+- mutate canonical identity files in `agents-identify`
+- mutate registry standing or reputation directly
+
+### 23.5 Degradation rule
+
+If inputs are missing, `agents-soul` degrades the behavioral rendering, not the
+identity truth. Example:
+
+- missing registry status means behavior may become cautious
+- missing identity commitments means output may omit commitment section
+- revoked registry status means output should render fail-closed guidance
+
+### 23.6 One session relationship
+
+`agents-soul` assumes one live session maps to one agent because the claim rule is
+enforced upstream. It does not attempt to solve session duplication itself.
+
+---
+
+## 24. Behavioral Composition Lifecycle
+
+### 24.1 High-level flow
+
+1. Load `soul.toml`.
+2. Load local adaptation DB.
+3. Read `SessionIdentitySnapshot` from `agents-identify`.
+4. Read `VerificationResult` and `ReputationSummary` from `agents-registry`.
+5. Normalize all inputs into `BehaviorInputs`.
+6. Apply baseline traits from config.
+7. Apply context-specific heuristic overrides.
+8. Apply bounded adaptive overrides.
+9. Render `BehavioralContext`.
+10. Emit warnings and provenance data.
+
+### 24.2 Why normalization exists
+
+Normalization isolates transport differences:
+
+- CLI file input
+- REST JSON response
+- MCP tool response
+
+All inputs must become the same internal Rust structs before synthesis.
+
+### 24.3 Composition modes
+
+- `full`
+- `prompt-prefix`
+- `debug`
+- `explain`
+
+`full` returns the complete context.
+
+`prompt-prefix` returns the compact system prompt prefix.
+
+`debug` returns context plus provenance details.
+
+`explain` returns why each trait or heuristic was chosen.
+
+### 24.4 Registry-aware behavior
+
+Behavior changes based on registry status:
+
+- `active` means normal output
+- `suspended` means render caution and restricted action hints
+- `revoked` means render fail-closed guidance and no normal prompt
+- `pending` means render probationary guidance
+- `retired` means render historical/readonly guidance
+
+### 24.5 Reputation-aware behavior
+
+Reputation affects:
+
+- level of self-confidence in claims
+- how much the agent emphasizes caution
+- whether self-check prompts are injected
+- how strongly collaboration heuristics appear
+
+### 24.6 Local commitments
+
+Commitments from `agents-identify` affect:
+
+- planning tone
+- promised next actions
+- urgency emphasis
+- reminder sections
+
+### 24.7 Relationship markers
+
+Relationship markers affect:
+
+- directness
+- familiarity
+- explanation depth
+- sensitivity to prior friction
+
+### 24.8 Determinism rule
+
+Given the same normalized inputs, composition must be deterministic. Randomness is
+not allowed in v1.
+
+### 24.9 Caching rule
+
+Behavioral output may be cached by input fingerprint, but the cache is disposable.
+
+### 24.10 Provenance rule
+
+Every major rendered section must be traceable back to:
+
+- baseline config
+- identity input
+- registry input
+- adaptation input
+
+---
+
+## 25. Canonical Domain Contract
+
+### 25.1 `BehaviorInputs`
+
+- `schema_version: u32`
+- `identity_snapshot: Option<SessionIdentitySnapshot>`
+- `verification_result: Option<VerificationResult>`
+- `reputation_summary: Option<ReputationSummary>`
+- `soul_config: SoulConfig`
+- `adaptation_state: AdaptationState`
+- `generated_at: DateTime<Utc>`
+
+### 25.2 `SoulConfig`
+
+- `schema_version: u32`
+- `agent_id: String`
+- `profile_name: String`
+- `trait_baseline: PersonalityProfile`
+- `communication_style: CommunicationStyle`
+- `decision_heuristics: Vec<DecisionHeuristic>`
+- `limits: SoulLimits`
+- `templates: TemplateConfig`
+
+### 25.3 `PersonalityProfile`
+
+- `openness: f32`
+- `conscientiousness: f32`
+- `initiative: f32`
+- `directness: f32`
+- `warmth: f32`
+- `risk_tolerance: f32`
+- `verbosity: f32`
+- `formality: f32`
+
+### 25.4 `CommunicationStyle`
+
+- `default_register: String`
+- `paragraph_budget: String`
+- `question_style: String`
+- `uncertainty_style: String`
+- `feedback_style: String`
+- `conflict_style: String`
+
+### 25.5 `DecisionHeuristic`
+
+- `heuristic_id: String`
+- `title: String`
+- `priority: i32`
+- `trigger: String`
+- `instruction: String`
+- `enabled: bool`
+
+### 25.6 `SoulLimits`
+
+- `max_trait_drift: f32`
+- `max_prompt_prefix_chars: usize`
+- `max_adaptive_rules: usize`
+- `offline_registry_behavior: String`
+- `revoked_behavior: String`
+
+### 25.7 `AdaptationState`
+
+- `schema_version: u32`
+- `last_updated_at: Option<DateTime<Utc>>`
+- `trait_overrides: PersonalityOverride`
+- `communication_overrides: CommunicationOverride`
+- `heuristic_overrides: Vec<HeuristicOverride>`
+- `evidence_window_size: u32`
+- `notes: Vec<String>`
+
+### 25.8 `BehavioralContext`
+
+- `schema_version: u32`
+- `agent_id: String`
+- `profile_name: String`
+- `status_summary: StatusSummary`
+- `trait_profile: PersonalityProfile`
+- `communication_rules: Vec<String>`
+- `decision_rules: Vec<String>`
+- `active_commitments: Vec<String>`
+- `relationship_context: Vec<String>`
+- `adaptive_notes: Vec<String>`
+- `warnings: Vec<String>`
+- `system_prompt_prefix: String`
+- `provenance: ProvenanceReport`
+
+### 25.9 `StatusSummary`
+
+- `identity_loaded: bool`
+- `registry_verified: bool`
+- `registry_status: Option<String>`
+- `reputation_loaded: bool`
+- `recovery_state: Option<String>`
+
+### 25.10 `ProvenanceReport`
+
+- `identity_fingerprint: Option<String>`
+- `registry_verification_at: Option<DateTime<Utc>>`
+- `config_hash: String`
+- `adaptation_hash: String`
+- `input_hash: String`
+
+### 25.11 Design rule
+
+All structs above must be usable unchanged in CLI `--json`, REST `data`, and MCP tool
+results.
+
+---
+
+## 26. Input Contract with agents-identify and agents-registry
+
+### 26.1 Identify dependency
+
+Primary input from `agents-identify`:
+
+- `SessionIdentitySnapshot`
+
+Relevant fields consumed:
+
+- `agent_id`
+- `display_name`
+- `recovery_state`
+- `active_commitments`
+- `durable_preferences`
+- `relationship_markers`
+- `facts`
+- `warnings`
+
+### 26.2 Registry dependency
+
+Primary inputs from `agents-registry`:
+
+- `VerificationResult`
+- `ReputationSummary`
+
+Relevant fields consumed:
+
+- `status`
+- `standing_level`
+- `reason_code`
+- `score_total`
+- `score_recent_30d`
+- `last_event_at`
+
+### 26.3 Missing input policy
+
+If identify snapshot missing:
+
+- `identity_loaded = false`
+- render warnings
+- omit identity-derived sections
+- keep baseline soul rendering
+
+If registry verification missing:
+
+- `registry_verified = false`
+- apply configured offline behavior
+- render caution notes
+
+If reputation missing:
+
+- omit reputation nuance
+- do not fail composition
+
+### 26.4 Revoked input policy
+
+If registry returns `revoked`:
+
+- return `BehavioralContext` with severe warnings
+- set `system_prompt_prefix` to fail-closed minimal text
+- no normal optimistic persona rendering
+
+### 26.5 Suspended input policy
+
+If registry returns `suspended`:
+
+- render restricted operation guidance
+- encourage human escalation
+- reduce autonomous initiative
+
+---
+
+## 27. Transport Contract Parity
+
+### 27.1 Required CLI commands
+
+- `agents-soul compose`
+- `agents-soul compose --prefix-only`
+- `agents-soul compose --json`
+- `agents-soul inspect`
+- `agents-soul inspect --traits`
+- `agents-soul inspect --heuristics`
+- `agents-soul configure`
+- `agents-soul reset`
+- `agents-soul explain`
+
+### 27.2 Required REST endpoints
+
+- `POST /api/v1/compose`
+- `GET /api/v1/traits`
+- `PATCH /api/v1/traits`
+- `GET /api/v1/heuristics`
+- `POST /api/v1/interactions`
+- `POST /api/v1/reset`
+- `POST /api/v1/explain`
+
+### 27.3 Required MCP tools
+
+- `soul_compose_context`
+- `soul_get_system_prompt_prefix`
+- `soul_get_traits`
+- `soul_update_traits`
+- `soul_get_heuristics`
+- `soul_record_interaction`
+- `soul_reset_adaptations`
+- `soul_explain_context`
+
+### 27.4 CLI/REST/MCP parity rule
+
+If `compose --json` returns a `BehavioralContext`, then:
+
+- REST `POST /compose` must return that same payload under `data`
+- MCP `soul_compose_context` must return that same payload under the tool result
+
+### 27.5 Exit codes
+
+- `0` success
+- `2` validation error
+- `3` upstream unavailable but degradable
+- `4` revoked or fail-closed status
+- `5` local config invalid
+- `6` storage failure
+- `7` internal error
+
+---
+
+## 28. Adaptation Engine Deep Spec
+
+### 28.1 Adaptation principle
+
+Adaptation is bounded learning, not personality drift without control.
+
+### 28.2 Adaptation sources
+
+- explicit interaction feedback
+- repeated operator overrides
+- observed response outcomes
+
+### 28.3 Non-sources
+
+Adaptation does not come from:
+
+- random mood
+- single isolated event unless configured
+- unverified external gossip
+
+### 28.4 Bounded drift
+
+Every numeric trait change must stay within `max_trait_drift` from the config baseline.
+
+### 28.5 Adaptation persistence
+
+Canonical adaptation data lives in SQLite events plus derived current overrides.
+
+### 28.6 Adaptation transparency
+
+Every adaptive effect must be visible through:
+
+- `adaptive_notes`
+- `inspect --adaptations`
+- `soul_explain_context`
+
+### 28.7 Reset semantics
+
+Reset clears adaptive overrides but never rewrites the baseline config.
+
+### 28.8 Evidence windows
+
+V1 tracks bounded evidence windows so recent interactions matter more.
+
+### 28.9 Heuristic override rules
+
+Heuristics can be:
+
+- strengthened
+- weakened
+- temporarily disabled
+
+but cannot disappear without explanation.
+
+### 28.10 Manual operator precedence
+
+Explicit operator config always wins over learned adaptation.
+
+---
+
+## 29. Reference Code: Domain Model
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoulConfig {
+    pub schema_version: u32,
+    pub agent_id: String,
+    pub profile_name: String,
+    pub trait_baseline: PersonalityProfile,
+    pub communication_style: CommunicationStyle,
+    pub decision_heuristics: Vec<DecisionHeuristic>,
+    pub limits: SoulLimits,
+    pub templates: TemplateConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonalityProfile {
+    pub openness: f32,
+    pub conscientiousness: f32,
+    pub initiative: f32,
+    pub directness: f32,
+    pub warmth: f32,
+    pub risk_tolerance: f32,
+    pub verbosity: f32,
+    pub formality: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommunicationStyle {
+    pub default_register: String,
+    pub paragraph_budget: String,
+    pub question_style: String,
+    pub uncertainty_style: String,
+    pub feedback_style: String,
+    pub conflict_style: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionHeuristic {
+    pub heuristic_id: String,
+    pub title: String,
+    pub priority: i32,
+    pub trigger: String,
+    pub instruction: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoulLimits {
+    pub max_trait_drift: f32,
+    pub max_prompt_prefix_chars: usize,
+    pub max_adaptive_rules: usize,
+    pub offline_registry_behavior: String,
+    pub revoked_behavior: String,
+}
+```
+
+### 29.1 Reference code: behavioral context
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BehavioralContext {
+    pub schema_version: u32,
+    pub agent_id: String,
+    pub profile_name: String,
+    pub status_summary: StatusSummary,
+    pub trait_profile: PersonalityProfile,
+    pub communication_rules: Vec<String>,
+    pub decision_rules: Vec<String>,
+    pub active_commitments: Vec<String>,
+    pub relationship_context: Vec<String>,
+    pub adaptive_notes: Vec<String>,
+    pub warnings: Vec<String>,
+    pub system_prompt_prefix: String,
+    pub provenance: ProvenanceReport,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusSummary {
+    pub identity_loaded: bool,
+    pub registry_verified: bool,
+    pub registry_status: Option<String>,
+    pub reputation_loaded: bool,
+    pub recovery_state: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProvenanceReport {
+    pub identity_fingerprint: Option<String>,
+    pub registry_verification_at: Option<DateTime<Utc>>,
+    pub config_hash: String,
+    pub adaptation_hash: String,
+    pub input_hash: String,
+}
+```
+
+### 29.2 Reference code: errors
+
+```rust
+#[derive(Debug, thiserror::Error)]
+pub enum SoulError {
+    #[error("invalid soul config: {0}")]
+    InvalidConfig(String),
+    #[error("identity input unavailable")]
+    IdentityUnavailable,
+    #[error("registry verification unavailable")]
+    RegistryUnavailable,
+    #[error("revoked identity cannot compose normal context")]
+    RevokedIdentity,
+    #[error("storage error: {0}")]
+    Storage(String),
+}
+```
+
+---
+
+## 30. Reference Code: Composition Pipeline
+
+```rust
+pub async fn compose_context(
+    deps: &ComposeDeps,
+    req: ComposeRequest,
+) -> Result<BehavioralContext, SoulError> {
+    let config = deps.config_store.load(&req.agent_id)?;
+    let identity = deps.identity_reader.read_snapshot(&req).await.ok();
+    let verification = deps.registry_reader.verify(&req).await.ok();
+    let reputation = deps.registry_reader.reputation(&req).await.ok();
+    let adaptation = deps.adaptation_store.load_current(&req.agent_id)?;
+
+    let inputs = BehaviorInputs {
+        schema_version: 1,
+        identity_snapshot: identity,
+        verification_result: verification,
+        reputation_summary: reputation,
+        soul_config: config,
+        adaptation_state: adaptation,
+        generated_at: Utc::now(),
+    };
+
+    let normalized = normalize_inputs(inputs)?;
+    let profile = apply_profile_layers(&normalized)?;
+    let communication_rules = derive_communication_rules(&normalized, &profile);
+    let decision_rules = derive_decision_rules(&normalized, &profile);
+    let commitments = derive_commitments(&normalized);
+    let relationships = derive_relationship_context(&normalized);
+    let adaptive_notes = derive_adaptive_notes(&normalized);
+    let warnings = derive_warnings(&normalized);
+    let system_prompt_prefix = render_system_prompt_prefix(
+        &normalized,
+        &profile,
+        &communication_rules,
+        &decision_rules,
+        &warnings,
+    )?;
+
+    Ok(BehavioralContext {
+        schema_version: 1,
+        agent_id: normalized.agent_id.clone(),
+        profile_name: normalized.profile_name.clone(),
+        status_summary: build_status_summary(&normalized),
+        trait_profile: profile,
+        communication_rules,
+        decision_rules,
+        active_commitments: commitments,
+        relationship_context: relationships,
+        adaptive_notes,
+        warnings,
+        system_prompt_prefix,
+        provenance: build_provenance(&normalized),
+    })
+}
+```
+
+### 30.1 Reference code: layering helpers
+
+```rust
+fn apply_profile_layers(inputs: &NormalizedInputs) -> Result<PersonalityProfile, SoulError> {
+    let mut profile = inputs.config.trait_baseline.clone();
+
+    if let Some(identity) = &inputs.identity {
+        if identity.recovery_state == "degraded" {
+            profile.risk_tolerance = clamp01(profile.risk_tolerance - 0.15);
+            profile.conscientiousness = clamp01(profile.conscientiousness + 0.10);
+        }
+    }
+
+    if let Some(verification) = &inputs.verification {
+        match verification.status.as_str() {
+            "active" => {}
+            "suspended" => {
+                profile.initiative = clamp01(profile.initiative - 0.30);
+                profile.risk_tolerance = clamp01(profile.risk_tolerance - 0.25);
+            }
+            "revoked" => {
+                profile.initiative = 0.0;
+                profile.risk_tolerance = 0.0;
+            }
+            _ => {}
+        }
+    }
+
+    apply_adaptive_overrides(&mut profile, &inputs.adaptation, inputs.config.limits.max_trait_drift);
+    Ok(profile)
+}
+```
+
+### 30.2 Reference code: prompt rendering
+
+```rust
+fn render_system_prompt_prefix(
+    inputs: &NormalizedInputs,
+    profile: &PersonalityProfile,
+    communication_rules: &[String],
+    decision_rules: &[String],
+    warnings: &[String],
+) -> Result<String, SoulError> {
+    if matches!(inputs.registry_status(), Some("revoked")) {
+        return Ok("Identity revoked. Do not continue normal operation. Surface the issue and request operator intervention.".to_string());
+    }
+
+    let mut lines = Vec::new();
+    lines.push(format!("You are agent {}.", inputs.agent_id));
+    lines.push(format!("Profile: {}.", inputs.profile_name));
+    lines.push(format!(
+        "Style: directness={:.2}, warmth={:.2}, verbosity={:.2}.",
+        profile.directness, profile.warmth, profile.verbosity
+    ));
+    lines.extend(communication_rules.iter().cloned());
+    lines.extend(decision_rules.iter().cloned());
+    lines.extend(warnings.iter().cloned());
+    Ok(lines.join("\n"))
+}
+```
+
+---
+
+## 31. Reference Code: Source Readers and Persistence
+
+```rust
+#[async_trait::async_trait]
+pub trait IdentityReader {
+    async fn read_snapshot(
+        &self,
+        req: &ComposeRequest,
+    ) -> Result<SessionIdentitySnapshot, SoulError>;
+}
+
+#[async_trait::async_trait]
+pub trait RegistryReader {
+    async fn verify(
+        &self,
+        req: &ComposeRequest,
+    ) -> Result<VerificationResult, SoulError>;
+
+    async fn reputation(
+        &self,
+        req: &ComposeRequest,
+    ) -> Result<ReputationSummary, SoulError>;
+}
+
+pub trait AdaptationStore {
+    fn load_current(&self, agent_id: &str) -> Result<AdaptationState, SoulError>;
+    fn record_interaction(&self, event: InteractionEvent) -> Result<(), SoulError>;
+    fn reset(&self, agent_id: &str) -> Result<(), SoulError>;
+}
+```
+
+### 31.1 Reference code: SQLite DDL
+
+```sql
+CREATE TABLE IF NOT EXISTS interaction_events (
+    id INTEGER PRIMARY KEY,
+    event_id TEXT NOT NULL UNIQUE,
+    agent_id TEXT NOT NULL,
+    signal_kind TEXT NOT NULL,
+    signal_value REAL NOT NULL,
+    context_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS adaptation_state (
+    agent_id TEXT PRIMARY KEY,
+    overrides_json TEXT NOT NULL,
+    notes_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+```
+
+### 31.2 Reference code: TOML config
+
+```toml
+schema_version = 1
+agent_id = "alpha"
+profile_name = "Alpha Builder"
+
+[trait_baseline]
+openness = 0.72
+conscientiousness = 0.90
+initiative = 0.84
+directness = 0.81
+warmth = 0.42
+risk_tolerance = 0.28
+verbosity = 0.34
+formality = 0.71
+
+[communication_style]
+default_register = "professional-direct"
+paragraph_budget = "short"
+question_style = "single-clarifier-when-needed"
+uncertainty_style = "explicit-and-bounded"
+feedback_style = "frank"
+conflict_style = "firm-respectful"
+
+[limits]
+max_trait_drift = 0.15
+max_prompt_prefix_chars = 4000
+max_adaptive_rules = 24
+offline_registry_behavior = "cautious"
+revoked_behavior = "fail-closed"
+```
+
+---
+
+## 32. Reference Code: Transport Surfaces
+
+### 32.1 CLI sketch
+
+```rust
+#[derive(clap::Parser)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(clap::Subcommand)]
+pub enum Commands {
+    Compose(ComposeCmd),
+    Inspect(InspectCmd),
+    Configure(ConfigureCmd),
+    Reset(ResetCmd),
+    Explain(ExplainCmd),
+}
+```
+
+### 32.2 Axum router sketch
+
+```rust
+pub fn router(state: AppState) -> Router {
+    Router::new()
+        .route("/api/v1/compose", post(api_compose))
+        .route("/api/v1/traits", get(api_get_traits).patch(api_patch_traits))
+        .route("/api/v1/heuristics", get(api_get_heuristics))
+        .route("/api/v1/interactions", post(api_record_interaction))
+        .route("/api/v1/reset", post(api_reset))
+        .route("/api/v1/explain", post(api_explain))
+        .with_state(state)
+}
+```
+
+### 32.3 MCP tool sketch
+
+```rust
+pub async fn soul_compose_context(
+    ctx: ToolContext,
+    args: ComposeRequest,
+) -> Result<BehavioralContext, McpError> {
+    ctx.services
+        .composer
+        .compose_context(&ctx.deps, args)
+        .await
+        .map_err(mcp_map_error)
+}
+```
+
+### 32.4 JSON example: compose response
+
+```json
+{
+  "schema_version": 1,
+  "agent_id": "alpha",
+  "profile_name": "Alpha Builder",
+  "status_summary": {
+    "identity_loaded": true,
+    "registry_verified": true,
+    "registry_status": "active",
+    "reputation_loaded": true,
+    "recovery_state": "healthy"
+  },
+  "trait_profile": {
+    "openness": 0.72,
+    "conscientiousness": 0.91,
+    "initiative": 0.80,
+    "directness": 0.81,
+    "warmth": 0.42,
+    "risk_tolerance": 0.24,
+    "verbosity": 0.34,
+    "formality": 0.71
+  },
+  "communication_rules": [
+    "Respond concisely and directly.",
+    "Ask at most one clarifying question when uncertainty blocks safe action."
+  ],
+  "decision_rules": [
+    "Honor active commitments before taking on new scope.",
+    "If registry status is degraded or unknown, lower autonomous risk."
+  ],
+  "active_commitments": [
+    "Finish contract review for registry integration."
+  ],
+  "relationship_context": [
+    "User prefers direct, non-fluffy technical discussion."
+  ],
+  "adaptive_notes": [
+    "Slightly reduced risk tolerance due to recent correction events."
+  ],
+  "warnings": [],
+  "system_prompt_prefix": "You are agent alpha...",
+  "provenance": {
+    "identity_fingerprint": "abc123",
+    "registry_verification_at": "2026-03-28T10:00:00Z",
+    "config_hash": "cfg_001",
+    "adaptation_hash": "adp_001",
+    "input_hash": "inp_001"
+  }
+}
+```
+
+---
+
+## 33. Detailed Implementation Backlog
+
+### 33.1 App shell
+
+- create `src/app/mod.rs`
+- create `src/app/config.rs`
+- create `src/app/deps.rs`
+- create `src/app/hash.rs`
+- add tracing bootstrap
+- add config loading rules
+
+### 33.2 Domain layer
+
+- define `SoulConfig`
+- define `PersonalityProfile`
+- define `CommunicationStyle`
+- define `DecisionHeuristic`
+- define `BehaviorInputs`
+- define `BehavioralContext`
+- define `StatusSummary`
+- define `ProvenanceReport`
+- define `SoulError`
+- add serde round-trip tests
+
+### 33.3 Source readers
+
+- implement file reader for identify export
+- implement REST reader for registry verify
+- implement MCP reader adapter for registry verify
+- implement REST reader for reputation summary
+- normalize all upstream errors
+- cache last successful reads where appropriate
+
+### 33.4 Composer
+
+- implement input normalization
+- implement baseline trait loading
+- implement identity-based modifiers
+- implement registry-status modifiers
+- implement reputation-based modifiers
+- implement commitment extraction
+- implement relationship rendering
+- implement warnings derivation
+- implement provenance hash generation
+
+### 33.5 Templates
+
+- add template loader
+- add system prompt prefix template
+- add full context template
+- add explain template
+- test with missing optional sections
+
+### 33.6 Adaptation
+
+- design interaction event schema
+- persist interaction events
+- compute bounded overrides
+- render adaptive notes
+- reset overrides
+- expose inspect command
+
+### 33.7 CLI
+
+- implement `compose`
+- implement `compose --prefix-only`
+- implement `compose --json`
+- implement `inspect`
+- implement `configure`
+- implement `reset`
+- implement `explain`
+
+### 33.8 REST
+
+- implement compose endpoint
+- implement traits get/patch
+- implement heuristics get
+- implement interactions post
+- implement reset post
+- implement explain post
+
+### 33.9 MCP
+
+- implement `soul_compose_context`
+- implement `soul_get_system_prompt_prefix`
+- implement `soul_get_traits`
+- implement `soul_update_traits`
+- implement `soul_get_heuristics`
+- implement `soul_record_interaction`
+- implement `soul_reset_adaptations`
+- implement `soul_explain_context`
+
+### 33.10 Docs and fixtures
+
+- add sample `soul.toml`
+- add sample full context JSON
+- add sample revoked fail-closed context
+- add sample degraded offline context
+
+---
+
+## 34. Research and Validation Checklist
+
+### 34.1 Behavioral science translation
+
+- confirm chosen trait vocabulary is actionable for agents
+- confirm traits map cleanly to concrete behaviors
+- define stable ranges for each numeric trait
+
+### 34.2 Runtime alignment
+
+- verify prompt prefix length works with target models
+- verify OpenClaw session memory plus soul prompt do not overconstrain
+- define when context should be recomposed during a session
+
+### 34.3 Safety research
+
+- decide exact wording for revoked fail-closed mode
+- decide exact wording for suspended restricted mode
+- test if negative reputation should reduce confidence or directness
+
+### 34.4 Operator ergonomics
+
+- choose best explain output format
+- choose best inspect output grouping
+- choose whether config comments should be preserved on rewrite
+
+---
+
+## 35. Expanded Test Matrix
+
+### 35.1 Composition tests
+
+- full inputs available
+- missing identity
+- missing registry verify
+- missing reputation
+- revoked identity
+- suspended identity
+- degraded identity
+- low reputation caution mode
+
+### 35.2 Template tests
+
+- full context render
+- prompt prefix only render
+- explain render
+- missing optional commitments
+- missing relationship markers
+
+### 35.3 Adaptation tests
+
+- record positive interaction
+- record correction event
+- bounded drift clamp
+- reset clears overrides
+- baseline survives reset
+
+### 35.4 Contract snapshot tests
+
+- compose JSON snapshot
+- explain JSON snapshot
+- traits JSON snapshot
+- heuristics JSON snapshot
+
+---
+
+## 36. Detailed File Inventory
+
+### 36.1 Crate root
+
+- `src/main.rs`: CLI binary bootstrap.
+- `src/lib.rs`: public crate surface.
+- `src/app/mod.rs`: app wiring.
+- `src/app/config.rs`: config loading.
+- `src/app/deps.rs`: dependency container.
+- `src/app/hash.rs`: content hashing helpers.
+- `src/app/runtime.rs`: runtime bootstrap.
+
+### 36.2 Domain files
+
+- `src/domain/mod.rs`: domain exports.
+- `src/domain/config.rs`: `SoulConfig`.
+- `src/domain/profile.rs`: `PersonalityProfile`.
+- `src/domain/style.rs`: `CommunicationStyle`.
+- `src/domain/heuristics.rs`: `DecisionHeuristic`.
+- `src/domain/limits.rs`: `SoulLimits`.
+- `src/domain/behavioral_context.rs`: `BehavioralContext`.
+- `src/domain/status.rs`: `StatusSummary`.
+- `src/domain/provenance.rs`: `ProvenanceReport`.
+- `src/domain/inputs.rs`: `BehaviorInputs`.
+- `src/domain/adaptation.rs`: adaptation models.
+- `src/domain/interactions.rs`: interaction event models.
+- `src/domain/errors.rs`: `SoulError`.
+
+### 36.3 Source readers
+
+- `src/sources/mod.rs`: source exports.
+- `src/sources/identity.rs`: identify readers.
+- `src/sources/registry.rs`: registry readers.
+- `src/sources/cache.rs`: optional response cache.
+- `src/sources/normalize.rs`: normalization layer.
+
+### 36.4 Services
+
+- `src/services/mod.rs`: service exports.
+- `src/services/compose.rs`: full composition pipeline.
+- `src/services/profile.rs`: trait layering.
+- `src/services/communication.rs`: communication rule derivation.
+- `src/services/decision_rules.rs`: heuristic rendering.
+- `src/services/relationships.rs`: relationship context rendering.
+- `src/services/commitments.rs`: commitment rendering.
+- `src/services/warnings.rs`: warning generation.
+- `src/services/provenance.rs`: provenance generation.
+- `src/services/explain.rs`: explain mode.
+- `src/services/templates.rs`: template rendering.
+- `src/services/limits.rs`: safety/limit enforcement.
+
+### 36.5 Adaptation files
+
+- `src/adaptation/mod.rs`: adaptation exports.
+- `src/adaptation/store.rs`: SQLite persistence.
+- `src/adaptation/ema.rs`: smoothing logic.
+- `src/adaptation/bounds.rs`: drift clamping.
+- `src/adaptation/overrides.rs`: effective override materialization.
+- `src/adaptation/reset.rs`: reset path.
+- `src/adaptation/notes.rs`: adaptive notes rendering.
+
+### 36.6 Storage files
+
+- `src/storage/mod.rs`: storage exports.
+- `src/storage/sqlite.rs`: database layer.
+- `src/storage/migrations.rs`: migrations.
+- `src/storage/fixtures.rs`: fixture helpers.
+
+### 36.7 Interfaces
+
+- `src/cli/mod.rs`: CLI exports.
+- `src/cli/compose.rs`: compose command.
+- `src/cli/inspect.rs`: inspect command.
+- `src/cli/configure.rs`: configure command.
+- `src/cli/reset.rs`: reset command.
+- `src/cli/explain.rs`: explain command.
+- `src/api/mod.rs`: REST exports if enabled.
+- `src/api/router.rs`: REST router.
+- `src/api/compose.rs`: compose endpoint.
+- `src/api/traits.rs`: traits endpoints.
+- `src/api/heuristics.rs`: heuristics endpoint.
+- `src/api/interactions.rs`: record interaction endpoint.
+- `src/api/reset.rs`: reset endpoint.
+- `src/api/explain.rs`: explain endpoint.
+- `src/mcp/mod.rs`: MCP exports.
+- `src/mcp/server.rs`: MCP server.
+- `src/mcp/tools.rs`: MCP tool handlers.
+
+### 36.8 Templates and fixtures
+
+- `templates/context_full.j2`: full context template.
+- `templates/prompt_prefix.j2`: prompt prefix template.
+- `templates/explain.j2`: explain template.
+- `fixtures/identity/healthy.json`: healthy identify fixture.
+- `fixtures/identity/degraded.json`: degraded identify fixture.
+- `fixtures/registry/active.json`: active verification fixture.
+- `fixtures/registry/suspended.json`: suspended verification fixture.
+- `fixtures/registry/revoked.json`: revoked verification fixture.
+- `fixtures/context/full.json`: expected full context fixture.
+
+---
+
+## 37. Scenario Ledger
+
+Each line is a scenario the implementation must handle.
+
+- `SOUL-S001`: active identity + active registry + good reputation -> normal direct profile.
+- `SOUL-S002`: active identity + active registry + no reputation -> omit reputation nuance.
+- `SOUL-S003`: active identity + suspended registry -> restricted initiative.
+- `SOUL-S004`: active identity + revoked registry -> fail-closed prefix.
+- `SOUL-S005`: degraded identity + active registry -> lower risk tolerance.
+- `SOUL-S006`: broken identity + active registry -> no normal context.
+- `SOUL-S007`: healthy identity + registry unavailable + offline policy cautious -> degraded cautious output.
+- `SOUL-S008`: healthy identity + registry unavailable + offline policy fail-closed -> no normal context.
+- `SOUL-S009`: relationship marker trusted-user -> slightly warmer output.
+- `SOUL-S010`: relationship marker high-friction -> increase explicitness and evidence.
+- `SOUL-S011`: one urgent commitment -> elevate execution focus.
+- `SOUL-S012`: many commitments -> mention prioritization discipline.
+- `SOUL-S013`: preference concise answers -> reduce paragraph budget.
+- `SOUL-S014`: preference deep analysis -> increase explanation depth.
+- `SOUL-S015`: low recent reputation -> add self-check rule.
+- `SOUL-S016`: excellent recent reputation -> maintain confidence but not arrogance.
+- `SOUL-S017`: adaptation suggests less risk -> clamp to max drift.
+- `SOUL-S018`: adaptation suggests more warmth -> clamp to max drift.
+- `SOUL-S019`: explicit operator config conflicts with adaptation -> operator config wins.
+- `SOUL-S020`: explain mode -> return provenance-heavy payload.
+- `SOUL-S021`: prefix-only mode -> omit bulky sections.
+- `SOUL-S022`: debug mode -> include derivation notes.
+- `SOUL-S023`: identity input from file snapshot -> normalize.
+- `SOUL-S024`: identity input from REST -> normalize.
+- `SOUL-S025`: identity input from MCP -> normalize.
+- `SOUL-S026`: registry input from REST -> normalize.
+- `SOUL-S027`: registry input from MCP -> normalize.
+- `SOUL-S028`: missing relationship markers -> empty section, no error.
+- `SOUL-S029`: missing commitments -> empty section, no error.
+- `SOUL-S030`: malformed optional reputation payload -> warning, no crash.
+- `SOUL-S031`: malformed config -> validation error.
+- `SOUL-S032`: unknown heuristic trigger -> keep disabled and warn.
+- `SOUL-S033`: duplicate heuristic id -> config error.
+- `SOUL-S034`: interaction event positive cooperation -> small warmth increase.
+- `SOUL-S035`: interaction event correction-needed -> small conscientiousness increase.
+- `SOUL-S036`: interaction event overreach -> lower initiative.
+- `SOUL-S037`: interaction event under-communication -> raise verbosity slightly.
+- `SOUL-S038`: interaction event user-frustration -> increase explicit uncertainty style.
+- `SOUL-S039`: interaction event success streak -> mild confidence uplift only within bounds.
+- `SOUL-S040`: reset adaptations -> baseline restored.
+- `SOUL-S041`: config comments untouched when no write occurs.
+- `SOUL-S042`: traits patch with persist=false -> session-only projection.
+- `SOUL-S043`: traits patch with persist=true -> update config file or overlay file by policy.
+- `SOUL-S044`: revoked status plus high reputation -> still fail-closed.
+- `SOUL-S045`: suspended status plus excellent reputation -> restricted mode remains.
+- `SOUL-S046`: retired status -> historical/readonly guidance.
+- `SOUL-S047`: pending status -> probationary tone.
+- `SOUL-S048`: healthy inputs + no adaptation -> pure baseline render.
+- `SOUL-S049`: adaptation store missing -> degrade without crash.
+- `SOUL-S050`: template missing -> clear error.
+- `SOUL-S051`: prefix too large -> truncate safely.
+- `SOUL-S052`: context too large -> shrink optional sections first.
+- `SOUL-S053`: warning-heavy context -> warnings appear before aggressive heuristics.
+- `SOUL-S054`: unknown registry standing -> caution note.
+- `SOUL-S055`: negative relationship marker -> extra evidence-oriented explanations.
+- `SOUL-S056`: strong trusted relationship -> slightly fewer caveats.
+- `SOUL-S057`: formal user preference -> raise formality.
+- `SOUL-S058`: casual user preference -> lower formality within bounds.
+- `SOUL-S059`: system prompt prefix regeneration with same inputs -> byte-identical output.
+- `SOUL-S060`: explain output with same inputs -> deterministic output.
+- `SOUL-S061`: many heuristics -> stable sort by priority then id.
+- `SOUL-S062`: disabled heuristic -> excluded from final rules.
+- `SOUL-S063`: duplicate commitments from identity -> dedupe by id.
+- `SOUL-S064`: stale registry verify timestamp -> warn.
+- `SOUL-S065`: old reputation snapshot -> warn.
+- `SOUL-S066`: no identity fingerprint in provenance -> allowed when input absent.
+- `SOUL-S067`: extremely verbose baseline + concise user preference -> layered compromise.
+- `SOUL-S068`: extremely direct baseline + high-friction relationship -> soften edge slightly.
+- `SOUL-S069`: low risk tolerance + urgent commitment -> act carefully but still prioritize.
+- `SOUL-S070`: broken identity + offline registry -> hard failure path.
+- `SOUL-S071`: multiple adaptation notes -> render in deterministic order.
+- `SOUL-S072`: compose after reset -> adaptation notes disappear.
+- `SOUL-S073`: inspect traits -> baseline and effective values both visible.
+- `SOUL-S074`: inspect heuristics -> enabled and disabled shown separately.
+- `SOUL-S075`: explain one rule -> show direct provenance chain.
+- `SOUL-S076`: explain commitment emphasis -> cite identity commitment input.
+- `SOUL-S077`: explain confidence reduction -> cite reputation or status input.
+- `SOUL-S078`: unknown config version -> migration or clear error.
+- `SOUL-S079`: config missing optional template path -> use default template.
+- `SOUL-S080`: config missing required limits -> validation error.
+- `SOUL-S081`: interaction event duplicated -> idempotent handling.
+- `SOUL-S082`: adaptation DB corruption -> degrade and surface repair note.
+- `SOUL-S083`: registry mismatch reason -> warn and lower confidence.
+- `SOUL-S084`: identity warning list non-empty -> include in context warnings.
+- `SOUL-S085`: prompt-prefix mode when revoked -> one short fail-closed block only.
+- `SOUL-S086`: high warmth + high directness -> frank but respectful tone.
+- `SOUL-S087`: low warmth + high conscientiousness -> precise and austere tone.
+- `SOUL-S088`: high openness + low verbosity -> creative but compact.
+- `SOUL-S089`: low openness + high formality -> conservative official tone.
+- `SOUL-S090`: high initiative + suspended status -> initiative clamped down.
+- `SOUL-S091`: high initiative + active status + many commitments -> focus before expansion.
+- `SOUL-S092`: unknown reputation category -> ignore category-specific effect.
+- `SOUL-S093`: no heuristics configured -> minimum safe defaults.
+- `SOUL-S094`: empty config file -> fail validation.
+- `SOUL-S095`: empty interaction DB -> baseline only.
+- `SOUL-S096`: stale cache hit -> ignored in favor of fresh input when available.
+- `SOUL-S097`: context render includes duplicate warning -> dedupe.
+- `SOUL-S098`: huge relationship list -> top-N render plus summary count.
+- `SOUL-S099`: huge commitment list -> priority sort and truncate.
+- `SOUL-S100`: huge facts list -> use only behavior-relevant facts.
+
+### 37.1 Extended scenario ledger
+
+- `SOUL-S101`: behavior must not claim authority over registry.
+- `SOUL-S102`: behavior must not claim authority over identity repair.
+- `SOUL-S103`: compose should succeed without UI present.
+- `SOUL-S104`: compose should succeed without REST server if CLI input provided.
+- `SOUL-S105`: MCP tool returns same payload as CLI JSON.
+- `SOUL-S106`: REST returns same payload as CLI JSON.
+- `SOUL-S107`: negative standing adds self-check heuristics.
+- `SOUL-S108`: excellent standing must not erase uncertainty guidance.
+- `SOUL-S109`: commitment marked blocked renders unblock-seeking behavior.
+- `SOUL-S110`: commitment marked due-soon renders urgency hint.
+- `SOUL-S111`: preference key unknown to soul -> ignore unless mapped.
+- `SOUL-S112`: relationship marker teammate -> increase collaborative language.
+- `SOUL-S113`: relationship marker adversarial -> increase documentation discipline.
+- `SOUL-S114`: directness clamp upper bound never exceeds 1.0.
+- `SOUL-S115`: directness clamp lower bound never below 0.0.
+- `SOUL-S116`: warmth clamp upper bound never exceeds 1.0.
+- `SOUL-S117`: risk_tolerance clamp lower bound never below 0.0.
+- `SOUL-S118`: risk_tolerance clamp upper bound never exceeds 1.0.
+- `SOUL-S119`: formality clamp behaves deterministically.
+- `SOUL-S120`: profile hash changes when config changes.
+- `SOUL-S121`: profile hash unchanged when irrelevant whitespace changes by parser normalization.
+- `SOUL-S122`: explain payload cites baseline trait values.
+- `SOUL-S123`: explain payload cites adaptive override values.
+- `SOUL-S124`: explain payload cites warning sources.
+- `SOUL-S125`: adaptation note wording is operator-readable.
+- `SOUL-S126`: revoked path suppresses normal collaboration encouragement.
+- `SOUL-S127`: suspended path keeps politeness but lowers autonomy.
+- `SOUL-S128`: pending path requests confirmation for higher-risk actions.
+- `SOUL-S129`: retired path discourages new commitments.
+- `SOUL-S130`: low-reputation path encourages extra verification of outputs.
+- `SOUL-S131`: high-friction relationship path reduces sarcasm risk to zero.
+- `SOUL-S132`: concise preference plus debug mode still exposes full derivation in JSON.
+- `SOUL-S133`: prompt prefix stays ASCII unless source data requires otherwise.
+- `SOUL-S134`: template render escapes user-supplied strings safely.
+- `SOUL-S135`: TOML parser preserves numeric precision enough for stable clamping.
+- `SOUL-S136`: same interaction event imported twice does not double-apply.
+- `SOUL-S137`: adaptation reset writes audit entry in local DB.
+- `SOUL-S138`: heuristic order remains stable across runs.
+- `SOUL-S139`: context warnings list sorted by severity.
+- `SOUL-S140`: provenance hashes computed after normalization not before.
+- `SOUL-S141`: behavior output includes agent id always.
+- `SOUL-S142`: behavior output includes profile name always.
+- `SOUL-S143`: missing profile name falls back to agent id with warning.
+- `SOUL-S144`: missing trait baseline is fatal config error.
+- `SOUL-S145`: missing limits section is fatal config error.
+- `SOUL-S146`: missing template config uses built-in defaults.
+- `SOUL-S147`: inspect command can read without registry connectivity.
+- `SOUL-S148`: explain command can work with cached normalization bundle.
+- `SOUL-S149`: registry reader timeout is surfaced as degraded, not panic.
+- `SOUL-S150`: identity reader timeout is surfaced as degraded, not panic.
+
+---
+
+## 38. Test Case Ledger
+
+- `SOUL-T001`: parse valid `soul.toml`.
+- `SOUL-T002`: reject invalid `soul.toml`.
+- `SOUL-T003`: compose healthy full context.
+- `SOUL-T004`: compose missing identity.
+- `SOUL-T005`: compose missing registry verification.
+- `SOUL-T006`: compose missing reputation.
+- `SOUL-T007`: compose revoked registry status.
+- `SOUL-T008`: compose suspended registry status.
+- `SOUL-T009`: compose pending registry status.
+- `SOUL-T010`: compose retired registry status.
+- `SOUL-T011`: render prompt prefix from healthy context.
+- `SOUL-T012`: render prompt prefix from revoked context.
+- `SOUL-T013`: render explain payload.
+- `SOUL-T014`: trait clamp upper bounds.
+- `SOUL-T015`: trait clamp lower bounds.
+- `SOUL-T016`: adaptation reset clears overrides.
+- `SOUL-T017`: adaptation notes stable ordering.
+- `SOUL-T018`: heuristics sorted by priority.
+- `SOUL-T019`: disabled heuristics excluded.
+- `SOUL-T020`: unknown heuristic trigger handled.
+- `SOUL-T021`: relationship markers render.
+- `SOUL-T022`: commitments render.
+- `SOUL-T023`: preferences influence style.
+- `SOUL-T024`: reputation low adds caution rules.
+- `SOUL-T025`: reputation high does not over-expand output.
+- `SOUL-T026`: explain references provenance.
+- `SOUL-T027`: provenance hash stable.
+- `SOUL-T028`: compose cache hit.
+- `SOUL-T029`: compose cache miss after config change.
+- `SOUL-T030`: compose cache miss after identity change.
+- `SOUL-T031`: compose cache miss after registry change.
+- `SOUL-T032`: interaction event stored.
+- `SOUL-T033`: duplicate interaction id idempotent.
+- `SOUL-T034`: inspect traits JSON.
+- `SOUL-T035`: inspect heuristics JSON.
+- `SOUL-T036`: inspect adaptations JSON.
+- `SOUL-T037`: CLI `compose --json`.
+- `SOUL-T038`: CLI `compose --prefix-only`.
+- `SOUL-T039`: CLI `inspect --traits`.
+- `SOUL-T040`: CLI `reset`.
+- `SOUL-T041`: REST compose route.
+- `SOUL-T042`: REST traits get route.
+- `SOUL-T043`: REST traits patch route.
+- `SOUL-T044`: REST interactions route.
+- `SOUL-T045`: REST reset route.
+- `SOUL-T046`: MCP compose tool.
+- `SOUL-T047`: MCP get prefix tool.
+- `SOUL-T048`: MCP get traits tool.
+- `SOUL-T049`: MCP record interaction tool.
+- `SOUL-T050`: snapshot full context.
+
+### 38.1 Extended test ledger
+
+- `SOUL-T051`: snapshot prefix context.
+- `SOUL-T052`: snapshot revoked fail-closed prefix.
+- `SOUL-T053`: snapshot suspended restricted prefix.
+- `SOUL-T054`: snapshot explain response.
+- `SOUL-T055`: registry timeout degrades compose.
+- `SOUL-T056`: identity timeout degrades compose.
+- `SOUL-T057`: cache load failure degrades compose.
+- `SOUL-T058`: adaptation DB missing recreates cleanly.
+- `SOUL-T059`: template missing returns error.
+- `SOUL-T060`: config missing limits returns error.
+- `SOUL-T061`: config missing profile name falls back with warning.
+- `SOUL-T062`: large commitment list truncates.
+- `SOUL-T063`: large relationship list truncates.
+- `SOUL-T064`: warning list deduplicates.
+- `SOUL-T065`: baseline profile unchanged by inspect.
+- `SOUL-T066`: persist=false patch does not touch disk.
+- `SOUL-T067`: persist=true patch touches disk.
+- `SOUL-T068`: manual patch overrides adaptation.
+- `SOUL-T069`: low risk tolerance with urgent commitments.
+- `SOUL-T070`: negative relationship marker increases evidence wording.
+- `SOUL-T071`: trusted relationship marker reduces boilerplate caution.
+- `SOUL-T072`: prompt prefix length cap enforced.
+- `SOUL-T073`: ASCII output default maintained.
+- `SOUL-T074`: non-ASCII source data preserved safely.
+- `SOUL-T075`: restore from fixtures round-trip.
+
+---
+
+## 39. Research Ledger
+
+- `SOUL-R001`: measure prompt token cost of full context vs prefix-only.
+- `SOUL-R002`: measure user preference responsiveness after adaptation.
+- `SOUL-R003`: evaluate if reputation should change directness.
+- `SOUL-R004`: evaluate if reputation should change verbosity.
+- `SOUL-R005`: define safe defaults when all upstream inputs absent.
+- `SOUL-R006`: define exact operator mental model for explain output.
+- `SOUL-R007`: compare TOML overlays vs single-file rewrites.
+- `SOUL-R008`: compare minijinja vs handwritten renderers.
+- `SOUL-R009`: define migration path for future web UI if needed.
+- `SOUL-R010`: define strategy for context recomposition frequency.
+- `SOUL-R011`: define whether adaptive overrides should decay over time.
+- `SOUL-R012`: define whether negative reputation should decay faster than positive.
+- `SOUL-R013`: define if relationship markers should be ranked.
+- `SOUL-R014`: define how many commitments meaningfully affect persona.
+- `SOUL-R015`: validate that revoked fail-closed wording is concise enough.
+- `SOUL-R016`: validate that suspended wording still permits safe introspection.
+- `SOUL-R017`: document operator flow for manually freezing adaptation.
+- `SOUL-R018`: decide whether config comments need round-trip preservation.
+- `SOUL-R019`: decide whether provenance should include raw input refs.
+- `SOUL-R020`: decide whether to support profile inheritance in v2.
+
+---
+
+## 40. Prompt Template Appendix
+
+### 40.1 Full context template sketch
+
+```jinja2
+Agent: {{ agent_id }}
+Profile: {{ profile_name }}
+
+Status:
+- identity_loaded={{ status_summary.identity_loaded }}
+- registry_verified={{ status_summary.registry_verified }}
+- registry_status={{ status_summary.registry_status or "unknown" }}
+- reputation_loaded={{ status_summary.reputation_loaded }}
+- recovery_state={{ status_summary.recovery_state or "unknown" }}
+
+Trait Profile:
+- openness={{ trait_profile.openness }}
+- conscientiousness={{ trait_profile.conscientiousness }}
+- initiative={{ trait_profile.initiative }}
+- directness={{ trait_profile.directness }}
+- warmth={{ trait_profile.warmth }}
+- risk_tolerance={{ trait_profile.risk_tolerance }}
+- verbosity={{ trait_profile.verbosity }}
+- formality={{ trait_profile.formality }}
+
+Communication Rules:
+{% for rule in communication_rules %}
+- {{ rule }}
+{% endfor %}
+
+Decision Rules:
+{% for rule in decision_rules %}
+- {{ rule }}
+{% endfor %}
+
+Active Commitments:
+{% for item in active_commitments %}
+- {{ item }}
+{% else %}
+- none
+{% endfor %}
+
+Relationship Context:
+{% for item in relationship_context %}
+- {{ item }}
+{% else %}
+- none
+{% endfor %}
+
+Adaptive Notes:
+{% for item in adaptive_notes %}
+- {{ item }}
+{% else %}
+- none
+{% endfor %}
+
+Warnings:
+{% for item in warnings %}
+- {{ item }}
+{% else %}
+- none
+{% endfor %}
+```
+
+### 40.2 Prompt prefix template sketch
+
+```jinja2
+You are agent {{ agent_id }} ({{ profile_name }}).
+Registry status: {{ status_summary.registry_status or "unknown" }}.
+Recovery state: {{ status_summary.recovery_state or "unknown" }}.
+Speak with directness={{ trait_profile.directness }}, warmth={{ trait_profile.warmth }}, formality={{ trait_profile.formality }}.
+{% for rule in communication_rules %}
+{{ rule }}
+{% endfor %}
+{% for rule in decision_rules %}
+{{ rule }}
+{% endfor %}
+{% for item in warnings %}
+WARNING: {{ item }}
+{% endfor %}
+```
+
+### 40.3 Revoked fail-closed prefix
+
+```text
+Identity revoked. Do not continue normal autonomous operation.
+Do not present yourself as an active verified agent.
+State the problem plainly.
+Ask for operator intervention.
+Do not take on new commitments.
+Do not claim registry validity.
+```
+
+### 40.4 Suspended restricted prefix
+
+```text
+Identity suspended. Operate in restricted advisory mode only.
+Lower initiative.
+Avoid high-risk actions.
+Surface uncertainty clearly.
+Request operator confirmation before consequential changes.
+```
+
+### 40.5 Explain output example
+
+```json
+{
+  "agent_id": "alpha",
+  "profile_name": "Alpha Builder",
+  "decisions": [
+    {
+      "field": "risk_tolerance",
+      "baseline": 0.28,
+      "effective": 0.24,
+      "contributors": [
+        "baseline from soul.toml",
+        "degraded identity recovery: -0.04"
+      ]
+    },
+    {
+      "field": "initiative",
+      "baseline": 0.84,
+      "effective": 0.80,
+      "contributors": [
+        "baseline from soul.toml",
+        "recent correction events: -0.04"
+      ]
+    }
+  ],
+  "warnings": [],
+  "provenance": {
+    "identity_fingerprint": "abc123",
+    "config_hash": "cfg_001",
+    "adaptation_hash": "adp_001",
+    "input_hash": "inp_001"
+  }
+}
+```
+
+### 40.6 Reference code: explain builder
+
+```rust
+pub fn build_explain_response(normalized: &NormalizedInputs) -> ExplainResponse {
+    let mut decisions = Vec::new();
+
+    decisions.push(ExplainField {
+        field: "risk_tolerance".to_string(),
+        baseline: normalized.config.trait_baseline.risk_tolerance,
+        effective: normalized.effective_profile.risk_tolerance,
+        contributors: normalized.contributors_for("risk_tolerance"),
+    });
+
+    decisions.push(ExplainField {
+        field: "initiative".to_string(),
+        baseline: normalized.config.trait_baseline.initiative,
+        effective: normalized.effective_profile.initiative,
+        contributors: normalized.contributors_for("initiative"),
+    });
+
+    ExplainResponse {
+        agent_id: normalized.agent_id.clone(),
+        profile_name: normalized.profile_name.clone(),
+        decisions,
+        warnings: normalized.warnings.clone(),
+        provenance: build_provenance(normalized),
+    }
+}
+```
+
+---
+
+## 41. Service and Module Blueprint
+
+This section replaces the generated material with an implementation-oriented map.
+
+### 41.1 Crate structure
+
+```text
+src/
+  app/
+    mod.rs
+    config.rs
+    deps.rs
+    hash.rs
+  domain/
+    mod.rs
+    config.rs
+    profile.rs
+    style.rs
+    heuristics.rs
+    limits.rs
+    inputs.rs
+    context.rs
+    provenance.rs
+    adaptations.rs
+    explain.rs
+    errors.rs
+  sources/
+    mod.rs
+    identity.rs
+    registry.rs
+    normalize.rs
+    cache.rs
+  services/
+    mod.rs
+    compose.rs
+    traits.rs
+    warnings.rs
+    relationships.rs
+    commitments.rs
+    templates.rs
+    explain.rs
+    reset.rs
+  adaptation/
+    mod.rs
+    store.rs
+    reducer.rs
+    bounds.rs
+    notes.rs
+  storage/
+    mod.rs
+    sqlite.rs
+    migrations.rs
+  cli/
+    mod.rs
+    compose.rs
+    inspect.rs
+    configure.rs
+    reset.rs
+    explain.rs
+  api/
+    mod.rs
+    router.rs
+    compose.rs
+    traits.rs
+    heuristics.rs
+    interactions.rs
+    reset.rs
+    explain.rs
+  mcp/
+    mod.rs
+    server.rs
+    tools.rs
+```
+
+### 41.2 `sources/identity.rs`
+
+Responsibilities:
+
+- load `SessionIdentitySnapshot` from file, REST, or MCP result
+- normalize transport errors into one source error shape
+- keep identity loading separate from behavior synthesis
+
+### 41.3 `sources/registry.rs`
+
+Responsibilities:
+
+- load `VerificationResult`
+- load `ReputationSummary`
+- distinguish unavailable, malformed, and negative-status cases
+
+### 41.4 `services/compose.rs`
+
+Responsibilities:
+
+- orchestrate the entire composition flow
+- call source readers
+- call trait layering
+- call template rendering
+- return one `BehavioralContext`
+
+It must not:
+
+- mutate upstream identity files
+- mutate registry records
+- hide revoked status behind a normal-looking prompt
+
+### 41.5 `services/traits.rs`
+
+Responsibilities:
+
+- apply baseline soul config
+- apply state-aware adjustments from identity and registry status
+- apply bounded adaptive overrides
+
+### 41.6 `services/warnings.rs`
+
+Responsibilities:
+
+- convert upstream health and status problems into explicit warnings
+- prioritize warnings by severity
+- deduplicate repeated warnings
+
+### 41.7 `adaptation/reducer.rs`
+
+Responsibilities:
+
+- take interaction events
+- update bounded trait overrides
+- update heuristic overrides
+- write transparent notes explaining why the override exists
+
+### 41.8 `services/templates.rs`
+
+Responsibilities:
+
+- render full context
+- render prompt prefix
+- render explain output
+- enforce prompt length limits
+
+### 41.9 `cli/compose.rs`
+
+Responsibilities:
+
+- provide human-readable and JSON output
+- make degraded and fail-closed paths obvious
+- never hide warnings in human mode
+
+### 41.10 `mcp/tools.rs`
+
+Responsibilities:
+
+- expose `soul_compose_context`
+- expose `soul_get_system_prompt_prefix`
+- expose `soul_get_traits`
+- expose `soul_update_traits`
+- expose `soul_record_interaction`
+- expose `soul_explain_context`
+
+---
+
+## 42. Composition Algorithm
+
+### 42.1 Ordered steps
+
+The composition path should run in this order:
+
+1. load config
+2. load adaptation state
+3. load identity snapshot
+4. load registry verification
+5. load reputation summary
+6. normalize all inputs
+7. derive effective traits
+8. derive communication rules
+9. derive decision rules
+10. derive warning list
+11. render output
+
+### 42.2 Why this order matters
+
+Warnings should know the effective registry and identity status.
+Traits should know whether the agent is revoked, suspended, degraded, or healthy.
+Rendering should happen only after the system knows whether fail-closed behavior is required.
+
+### 42.3 Revoked short-circuit
+
+If registry status is `revoked`:
+
+- full normal composition stops
+- a minimal fail-closed context is rendered instead
+- adaptive style does not override revocation
+
+### 42.4 Suspended restricted mode
+
+If registry status is `suspended`:
+
+- initiative reduced
+- risk tolerance reduced
+- operator-confirmation heuristics injected
+- normal voice may remain, but autonomy drops
+
+### 42.5 Missing registry data
+
+If registry data is missing:
+
+- follow configured offline behavior
+- degrade gracefully if policy allows
+- fail closed if policy requires
+
+---
+
+## 43. Status-Aware Behavior Mapping
+
+### 43.1 `active`
+
+Expected behavior:
+
+- normal working persona
+- normal commitment emphasis
+- no extra status warning beyond provenance details
+
+### 43.2 `pending`
+
+Expected behavior:
+
+- more cautious wording
+- less assumption of established trust
+- more explicit verification reminders
+
+### 43.3 `suspended`
+
+Expected behavior:
+
+- advisory mode
+- no aggressive autonomy
+- more frequent operator-confirmation cues
+
+### 43.4 `revoked`
+
+Expected behavior:
+
+- fail-closed prompt prefix
+- direct request for operator intervention
+- no new commitments
+
+### 43.5 `retired`
+
+Expected behavior:
+
+- historical or readonly framing
+- no encouragement toward new work
+
+---
+
+## 44. Template Rules
+
+### 44.1 Full context template
+
+Must include:
+
+- identity status summary
+- registry status summary
+- effective trait profile
+- communication rules
+- decision rules
+- commitments if present
+- warnings if present
+
+### 44.2 Prompt prefix template
+
+Must be:
+
+- short enough for repeated runtime injection
+- explicit about revoked or suspended status
+- deterministic
+
+### 44.3 Explain template
+
+Must answer:
+
+- which baseline value applied?
+- which upstream status changed it?
+- which adaptation changed it?
+- which warning changed the final output?
+
+### 44.4 Template safety
+
+Need escaping rules for:
+
+- user-supplied relationship notes
+- commitment titles
+- free-text reputation context if ever rendered
+
+---
+
+## 45. Adaptation Rules
+
+### 45.1 What may adapt
+
+Allowed to adapt:
+
+- warmth
+- verbosity
+- initiative
+- directness
+- selected heuristics
+
+### 45.2 What may not adapt freely
+
+Must stay controlled:
+
+- fail-closed revoked wording
+- suspended restrictions
+- maximum risk tolerance
+- operator-configured hard rules
+
+### 45.3 Boundaries
+
+Every adaptive change must stay within `max_trait_drift`.
+
+### 45.4 Transparency
+
+Every adaptive change must be visible in:
+
+- `adaptive_notes`
+- inspect output
+- explain output
+
+### 45.5 Reset behavior
+
+Reset should:
+
+- clear overrides
+- preserve the baseline config
+- preserve prior interaction history only if the design explicitly wants that
+
+---
+
+## 46. Reader and Cache Contracts
+
+### 46.1 Reader priority
+
+Prefer explicit input when provided:
+
+1. direct JSON file input
+2. REST/MCP live fetch
+3. optional local cache
+
+### 46.2 Cache role
+
+Cache exists only to speed repeated reads or support degraded composition.
+It must never become a hidden authority.
+
+### 46.3 Cache invalidation
+
+Invalidate when:
+
+- `soul.toml` changes
+- identity snapshot changes
+- registry verification timestamp changes
+- adaptation state changes
+
+### 46.4 Cache failure
+
+If cache is corrupt:
+
+- log warning
+- bypass cache
+- continue with fresh reads if possible
+
+---
+
+## 47. Implementation Sequence
+
+### 47.1 Slice 1
+
+Build:
+
+- config parsing
+- domain types
+- compose path with local fixtures only
+
+### 47.2 Slice 2
+
+Build:
+
+- identify reader
+- registry reader
+- normalized input pipeline
+
+### 47.3 Slice 3
+
+Build:
+
+- template rendering
+- prompt prefix
+- warnings and explain output
+
+### 47.4 Slice 4
+
+Build:
+
+- adaptation store
+- interaction recording
+- reset behavior
+
+### 47.5 Slice 5
+
+Build:
+
+- REST endpoints
+- MCP tools
+- transport parity tests
+
+---
+
+## 48. Test Strategy Deep Dive
+
+### 48.1 Unit tests
+
+Need unit tests for:
+
+- trait clamping
+- warning prioritization
+- template rendering with missing sections
+- provenance hash generation
+
+### 48.2 Integration tests
+
+Need integration tests for:
+
+- healthy full compose
+- suspended compose
+- revoked fail-closed compose
+- missing registry compose
+- adaptation then compose
+
+### 48.3 Snapshot tests
+
+Snapshot tests should cover:
+
+- full context JSON
+- prompt prefix text
+- explain JSON
+- revoked output
+- suspended output
+
+### 48.4 Review questions
+
+A reviewer should be able to answer:
+
+- Does soul ever overrule registry validity?
+- Does fail-closed mode really suppress normal behavior?
+- Can degraded composition happen without hiding the degraded state?
+- Are templates deterministic?
+- Are adaptation effects visible and bounded?
+
+---
+
+## 49. Executable Draft: Compose Service
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComposeRequest {
+    pub agent_id: String,
+    pub mode: ComposeMode,
+    pub identity_source: Option<InputSource>,
+    pub registry_source: Option<InputSource>,
+}
+
+pub struct ComposeService {
+    config_store: Arc<ConfigStore>,
+    identity_reader: Arc<dyn IdentityReader>,
+    registry_reader: Arc<dyn RegistryReader>,
+    adaptation_store: Arc<dyn AdaptationStore>,
+    template_engine: Arc<TemplateEngine>,
+}
+
+impl ComposeService {
+    pub async fn compose(
+        &self,
+        req: ComposeRequest,
+    ) -> Result<BehavioralContext, SoulError> {
+        let config = self.config_store.load(&req.agent_id)?;
+        let adaptation_state = self.adaptation_store.load_current(&req.agent_id)?;
+        let identity_snapshot = self.identity_reader.read_snapshot(&req).await.ok();
+        let verification_result = self.registry_reader.verify(&req).await.ok();
+        let reputation_summary = self.registry_reader.reputation(&req).await.ok();
+
+        let normalized = normalize_inputs(BehaviorInputs {
+            schema_version: 1,
+            identity_snapshot,
+            verification_result,
+            reputation_summary,
+            soul_config: config,
+            adaptation_state,
+            generated_at: Utc::now(),
+        })?;
+
+        if matches!(normalized.registry_status(), Some("revoked")) {
+            return Ok(build_revoked_context(&normalized));
+        }
+
+        let trait_profile = derive_effective_profile(&normalized)?;
+        let communication_rules = derive_communication_rules(&normalized, &trait_profile);
+        let decision_rules = derive_decision_rules(&normalized, &trait_profile);
+        let warnings = derive_warnings(&normalized);
+
+        let system_prompt_prefix = self.template_engine.render_prefix(
+            &normalized,
+            &trait_profile,
+            &communication_rules,
+            &decision_rules,
+            &warnings,
+        )?;
+
+        Ok(BehavioralContext {
+            schema_version: 1,
+            agent_id: normalized.agent_id.clone(),
+            profile_name: normalized.profile_name.clone(),
+            status_summary: build_status_summary(&normalized),
+            trait_profile,
+            communication_rules,
+            decision_rules,
+            active_commitments: derive_commitment_strings(&normalized),
+            relationship_context: derive_relationship_strings(&normalized),
+            adaptive_notes: derive_adaptive_notes(&normalized),
+            warnings,
+            system_prompt_prefix,
+            provenance: build_provenance(&normalized),
+        })
+    }
+}
+```
+
+### 49.1 Trait layering
+
+```rust
+pub fn derive_effective_profile(
+    normalized: &NormalizedInputs,
+) -> Result<PersonalityProfile, SoulError> {
+    let mut profile = normalized.config.trait_baseline.clone();
+
+    if let Some(identity) = &normalized.identity {
+        if identity.recovery_state == "degraded" {
+            profile.risk_tolerance = clamp01(profile.risk_tolerance - 0.10);
+            profile.conscientiousness = clamp01(profile.conscientiousness + 0.08);
+        }
+    }
+
+    if let Some(verification) = &normalized.verification {
+        match verification.status.as_str() {
+            "suspended" => {
+                profile.initiative = clamp01(profile.initiative - 0.30);
+                profile.risk_tolerance = clamp01(profile.risk_tolerance - 0.25);
+            }
+            "pending" => {
+                profile.initiative = clamp01(profile.initiative - 0.10);
+            }
+            _ => {}
+        }
+    }
+
+    apply_bounded_overrides(
+        &mut profile,
+        &normalized.config.trait_baseline,
+        &normalized.adaptation.trait_overrides,
+        normalized.config.limits.max_trait_drift,
+    );
+
+    Ok(profile)
+}
+```
+
+---
+
+## 50. Executable Draft: Template and Explain Paths
+
+### 50.1 Prompt prefix renderer
+
+```rust
+pub fn render_prefix(
+    normalized: &NormalizedInputs,
+    profile: &PersonalityProfile,
+    communication_rules: &[String],
+    decision_rules: &[String],
+    warnings: &[String],
+) -> Result<String, SoulError> {
+    if matches!(normalized.registry_status(), Some("revoked")) {
+        return Ok(
+            "Identity revoked. Do not continue normal autonomous operation. Ask for operator intervention."
+                .to_string(),
+        );
+    }
+
+    let mut lines = vec![
+        format!("You are agent {}.", normalized.agent_id),
+        format!("Profile: {}.", normalized.profile_name),
+        format!(
+            "Style: directness={:.2}, warmth={:.2}, formality={:.2}.",
+            profile.directness, profile.warmth, profile.formality
+        ),
+    ];
+
+    lines.extend(communication_rules.iter().cloned());
+    lines.extend(decision_rules.iter().cloned());
+    lines.extend(warnings.iter().map(|w| format!("WARNING: {w}")));
+
+    let text = lines.join("\n");
+    if text.len() > normalized.config.limits.max_prompt_prefix_chars {
+        return Ok(text.chars().take(normalized.config.limits.max_prompt_prefix_chars).collect());
+    }
+    Ok(text)
+}
+```
+
+### 50.2 Explain response
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExplainField {
+    pub field: String,
+    pub baseline: f32,
+    pub effective: f32,
+    pub contributors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExplainResponse {
+    pub agent_id: String,
+    pub profile_name: String,
+    pub decisions: Vec<ExplainField>,
+    pub warnings: Vec<String>,
+    pub provenance: ProvenanceReport,
+}
+
+pub fn build_explain_response(
+    normalized: &NormalizedInputs,
+    effective: &PersonalityProfile,
+) -> ExplainResponse {
+    ExplainResponse {
+        agent_id: normalized.agent_id.clone(),
+        profile_name: normalized.profile_name.clone(),
+        decisions: vec![
+            ExplainField {
+                field: "initiative".into(),
+                baseline: normalized.config.trait_baseline.initiative,
+                effective: effective.initiative,
+                contributors: normalized.contributors_for("initiative"),
+            },
+            ExplainField {
+                field: "risk_tolerance".into(),
+                baseline: normalized.config.trait_baseline.risk_tolerance,
+                effective: effective.risk_tolerance,
+                contributors: normalized.contributors_for("risk_tolerance"),
+            },
+        ],
+        warnings: derive_warnings(normalized),
+        provenance: build_provenance(normalized),
+    }
+}
+```
+
+---
+
+## 51. Executable Draft: Readers, Routes, and Tests
+
+### 51.1 Reader traits
+
+```rust
+#[async_trait::async_trait]
+pub trait IdentityReader: Send + Sync {
+    async fn read_snapshot(
+        &self,
+        req: &ComposeRequest,
+    ) -> Result<SessionIdentitySnapshot, SoulError>;
+}
+
+#[async_trait::async_trait]
+pub trait RegistryReader: Send + Sync {
+    async fn verify(
+        &self,
+        req: &ComposeRequest,
+    ) -> Result<VerificationResult, SoulError>;
+
+    async fn reputation(
+        &self,
+        req: &ComposeRequest,
+    ) -> Result<ReputationSummary, SoulError>;
+}
+```
+
+### 51.2 Axum routes
+
+```rust
+pub fn router(state: AppState) -> Router {
+    Router::new()
+        .route("/api/v1/compose", post(api_compose))
+        .route("/api/v1/traits", get(api_get_traits).patch(api_patch_traits))
+        .route("/api/v1/heuristics", get(api_get_heuristics))
+        .route("/api/v1/interactions", post(api_record_interaction))
+        .route("/api/v1/reset", post(api_reset))
+        .route("/api/v1/explain", post(api_explain))
+        .with_state(state)
+}
+```
+
+### 51.3 MCP tools
+
+```rust
+pub async fn soul_compose_context(
+    ctx: ToolContext,
+    args: ComposeRequest,
+) -> Result<BehavioralContext, McpError> {
+    ctx.services.compose.compose(args).await.map_err(mcp_map_error)
+}
+
+pub async fn soul_explain_context(
+    ctx: ToolContext,
+    args: ComposeRequest,
+) -> Result<ExplainResponse, McpError> {
+    let context = ctx.services.compose.compose(args.clone()).await.map_err(mcp_map_error)?;
+    let normalized = ctx.services.compose.normalize_only(args).await.map_err(mcp_map_error)?;
+    Ok(build_explain_response(&normalized, &context.trait_profile))
+}
+```
+
+### 51.4 Tests
+
+```rust
+#[tokio::test]
+async fn revoked_status_returns_fail_closed_context() {
+    let deps = test_deps_with_registry_status("revoked");
+    let context = deps.compose_service.compose(ComposeRequest {
+        agent_id: "alpha".into(),
+        mode: ComposeMode::Full,
+        identity_source: None,
+        registry_source: None,
+    }).await.unwrap();
+
+    assert!(context.system_prompt_prefix.contains("Identity revoked"));
+}
+
+#[tokio::test]
+async fn suspended_status_reduces_initiative() {
+    let deps = test_deps_with_registry_status("suspended");
+    let context = deps.compose_service.compose(ComposeRequest {
+        agent_id: "alpha".into(),
+        mode: ComposeMode::Full,
+        identity_source: None,
+        registry_source: None,
+    }).await.unwrap();
+
+    assert!(context.trait_profile.initiative < 0.84);
+}
+```
+
+---
+
+## 52. Executable Draft: Adaptation Store and CLI
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractionEvent {
+    pub event_id: String,
+    pub agent_id: String,
+    pub signal_kind: String,
+    pub signal_value: f32,
+    pub context_json: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+}
+
+pub trait AdaptationStore: Send + Sync {
+    fn load_current(&self, agent_id: &str) -> Result<AdaptationState, SoulError>;
+    fn record_interaction(&self, event: InteractionEvent) -> Result<(), SoulError>;
+    fn reset(&self, agent_id: &str) -> Result<(), SoulError>;
+}
+
+pub fn reduce_interaction(
+    state: &mut AdaptationState,
+    event: &InteractionEvent,
+    baseline: &PersonalityProfile,
+    max_drift: f32,
+) {
+    match event.signal_kind.as_str() {
+        "overreach" => {
+            state.trait_overrides.initiative -= 0.05;
+            state.trait_overrides.risk_tolerance -= 0.05;
+            state.notes.push("Reduced initiative after overreach signal.".into());
+        }
+        "under_explained" => {
+            state.trait_overrides.verbosity += 0.04;
+            state.notes.push("Raised verbosity after under-explained signal.".into());
+        }
+        "too_blunt" => {
+            state.trait_overrides.warmth += 0.05;
+            state.notes.push("Raised warmth after too-blunt signal.".into());
+        }
+        _ => {}
+    }
+
+    clamp_overrides_to_baseline(state, baseline, max_drift);
+}
+```
+
+### 52.1 CLI sketch
+
+```rust
+#[derive(clap::Parser)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(clap::Subcommand)]
+pub enum Commands {
+    Compose(ComposeCmd),
+    Inspect(InspectCmd),
+    Configure(ConfigureCmd),
+    Reset(ResetCmd),
+    Explain(ExplainCmd),
+}
+
+#[derive(clap::Args)]
+pub struct ComposeCmd {
+    #[arg(long)]
+    pub agent_id: String,
+    #[arg(long, default_value = "full")]
+    pub mode: String,
+    #[arg(long)]
+    pub json: bool,
+}
+```
