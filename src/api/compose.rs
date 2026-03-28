@@ -1,14 +1,11 @@
 use crate::{
-    domain::{BehavioralContext, ComposeRequest, SoulError},
-    services::SoulServices,
+    domain::{BehavioralContext, ComposeRequest},
+    services::{ServiceError, SoulServices},
 };
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ComposeEndpoint;
 
 pub fn compose_context(
     services: &SoulServices,
     request: ComposeRequest,
-) -> Result<BehavioralContext, SoulError> {
+) -> Result<BehavioralContext, ServiceError> {
     services.compose.compose(request)
 }

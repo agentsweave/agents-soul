@@ -1,15 +1,15 @@
-mod adaptation;
-mod behavioral_context;
-mod config;
-mod errors;
-mod heuristics;
-mod inputs;
-mod interactions;
-mod limits;
-mod profile;
-mod provenance;
-mod status;
-mod style;
+pub mod adaptation;
+pub mod behavioral_context;
+pub mod config;
+pub mod errors;
+pub mod heuristics;
+pub mod inputs;
+pub mod interactions;
+pub mod limits;
+pub mod profile;
+pub mod provenance;
+pub mod status;
+pub mod style;
 
 pub use adaptation::{
     AdaptationState, CommunicationOverride, HeuristicOverride, PersonalityOverride,

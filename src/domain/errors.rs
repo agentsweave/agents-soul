@@ -1,27 +1,34 @@
-use thiserror::Error;
-
-#[derive(Debug, Error, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SoulError {
-    #[error("failed to read soul config at `{path}`: {message}")]
     ConfigRead { path: String, message: String },
-    #[error("failed to parse soul config at `{path}`: {message}")]
     ConfigParse { path: String, message: String },
-    #[error("invalid soul config: {0}")]
     InvalidConfig(String),
-    #[error("field `{field}` must be within 0.0..=1.0, got {value}")]
-    InvalidTraitValue { field: &'static str, value: f32 },
-    #[error("field `{0}` must not be empty")]
-    EmptyField(&'static str),
-    #[error("duplicate heuristic id `{0}`")]
-    DuplicateHeuristicId(String),
-    #[error("required upstream inputs are broken")]
     RequiredInputsBroken,
-    #[error("identity input unavailable")]
     IdentityUnavailable,
-    #[error("registry verification unavailable")]
     RegistryUnavailable,
-    #[error("revoked identity cannot compose normal context")]
     RevokedIdentity,
-    #[error("storage error: {0}")]
     Storage(String),
+    BootstrapPlaceholder(&'static str),
 }
+
+impl std::fmt::Display for SoulError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ConfigRead { path, message } => {
+                write!(f, "failed to read soul config at `{path}`: {message}")
+            }
+            Self::ConfigParse { path, message } => {
+                write!(f, "failed to parse soul config at `{path}`: {message}")
+            }
+            Self::InvalidConfig(reason) => write!(f, "invalid soul config: {reason}"),
+            Self::RequiredInputsBroken => write!(f, "required upstream inputs are broken"),
+            Self::IdentityUnavailable => write!(f, "identity input unavailable"),
+            Self::RegistryUnavailable => write!(f, "registry verification unavailable"),
+            Self::RevokedIdentity => write!(f, "revoked identity cannot compose normal context"),
+            Self::Storage(reason) => write!(f, "storage error: {reason}"),
+            Self::BootstrapPlaceholder(message) => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for SoulError {}

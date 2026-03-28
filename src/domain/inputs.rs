@@ -1,27 +1,134 @@
-use std::path::PathBuf;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
-use crate::domain::{AdaptationState, SoulConfig};
+use super::{
+    AdaptationState, BehaviorWarning, ComposeMode, RecoveryState, RegistryStatus, SoulConfig,
+};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComposeRequest {
+    pub workspace_id: String,
     pub agent_id: String,
     pub session_id: String,
-    pub workspace_root: PathBuf,
+    #[serde(default = "default_true")]
+    pub include_reputation: bool,
+    #[serde(default = "default_true")]
+    pub include_relationships: bool,
+    #[serde(default = "default_true")]
+    pub include_commitments: bool,
 }
 
 impl ComposeRequest {
     pub fn new(agent_id: impl Into<String>, session_id: impl Into<String>) -> Self {
+        let agent_id = agent_id.into();
         Self {
-            agent_id: agent_id.into(),
+            workspace_id: agent_id.clone(),
+            agent_id,
             session_id: session_id.into(),
-            workspace_root: PathBuf::from("."),
+            include_reputation: true,
+            include_relationships: true,
+            include_commitments: true,
         }
+    }
+
+    pub fn validate(&self) -> Result<(), super::SoulError> {
+        if self.workspace_id.trim().is_empty() {
+            return Err(super::SoulError::EmptyField("workspace_id"));
+        }
+        if self.agent_id.trim().is_empty() {
+            return Err(super::SoulError::EmptyField("agent_id"));
+        }
+        if self.session_id.trim().is_empty() {
+            return Err(super::SoulError::EmptyField("session_id"));
+        }
+        Ok(())
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelationshipMarker {
+    pub subject: String,
+    pub marker: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionIdentitySnapshot {
+    pub agent_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub recovery_state: RecoveryState,
+    #[serde(default)]
+    pub active_commitments: Vec<String>,
+    #[serde(default)]
+    pub durable_preferences: Vec<String>,
+    #[serde(default)]
+    pub relationship_markers: Vec<RelationshipMarker>,
+    #[serde(default)]
+    pub facts: Vec<String>,
+    #[serde(default)]
+    pub warnings: Vec<BehaviorWarning>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VerificationResult {
+    pub status: RegistryStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standing_level: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ReputationSummary {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score_total: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score_recent_30d: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_event_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub context: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BehaviorInputs {
+    pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_snapshot: Option<SessionIdentitySnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_result: Option<VerificationResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reputation_summary: Option<ReputationSummary>,
+    pub soul_config: SoulConfig,
+    #[serde(default)]
+    pub adaptation_state: AdaptationState,
+    pub generated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NormalizedInputs {
+    pub schema_version: u32,
     pub request: ComposeRequest,
-    pub config: SoulConfig,
-    pub adaptation: AdaptationState,
+    pub agent_id: String,
+    pub profile_name: String,
+    pub compose_mode_hint: Option<ComposeMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_snapshot: Option<SessionIdentitySnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_result: Option<VerificationResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reputation_summary: Option<ReputationSummary>,
+    pub soul_config: SoulConfig,
+    pub adaptation_state: AdaptationState,
+    pub generated_at: DateTime<Utc>,
+}
+
+fn default_true() -> bool {
+    true
 }

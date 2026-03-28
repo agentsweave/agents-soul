@@ -10,24 +10,17 @@ pub mod relationships;
 pub mod templates;
 pub mod warnings;
 
-use crate::services::{
-    commitments::CommitmentsService, communication::CommunicationService, compose::ComposeService,
-    decision_rules::DecisionRulesService, explain::ExplainService, limits::LimitsService,
-    profile::ProfileService, provenance::ProvenanceService, relationships::RelationshipsService,
-    templates::TemplatesService, warnings::WarningsService,
-};
+use thiserror::Error;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub use compose::ComposeService;
+
+#[derive(Debug, Clone, Default)]
 pub struct SoulServices {
     pub compose: ComposeService,
-    pub profile: ProfileService,
-    pub communication: CommunicationService,
-    pub decision_rules: DecisionRulesService,
-    pub relationships: RelationshipsService,
-    pub commitments: CommitmentsService,
-    pub warnings: WarningsService,
-    pub provenance: ProvenanceService,
-    pub explain: ExplainService,
-    pub templates: TemplatesService,
-    pub limits: LimitsService,
+}
+
+#[derive(Debug, Error, Clone, PartialEq)]
+pub enum ServiceError {
+    #[error("{0}")]
+    InvalidRequest(crate::domain::SoulError),
 }

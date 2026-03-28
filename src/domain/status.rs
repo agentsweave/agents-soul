@@ -1,24 +1,41 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RegistryStanding {
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ComposeMode {
+    Normal,
+    Restricted,
+    Degraded,
+    #[default]
+    BaselineOnly,
+    FailClosed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RegistryStatus {
     Active,
+    Pending,
     Suspended,
     Revoked,
-    Unavailable,
+    Retired,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecoveryState {
+    Healthy,
+    Recovering,
+    Degraded,
+    Broken,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct StatusSummary {
-    pub registry: RegistryStanding,
-    pub degraded: bool,
-    pub notes: Vec<String>,
-}
-
-impl StatusSummary {
-    pub fn baseline_only() -> Self {
-        Self {
-            registry: RegistryStanding::Unavailable,
-            degraded: true,
-            notes: vec!["upstream readers are not wired yet".to_string()],
-        }
-    }
+    pub compose_mode: ComposeMode,
+    pub identity_loaded: bool,
+    pub registry_verified: bool,
+    pub registry_status: Option<RegistryStatus>,
+    pub reputation_loaded: bool,
+    pub recovery_state: Option<RecoveryState>,
 }

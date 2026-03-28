@@ -1,10 +1,8 @@
-pub fn stable_hash(input: &str) -> String {
-    let mut hash = 0xcbf29ce484222325_u64;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
-    for byte in input.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-
-    format!("{hash:016x}")
+pub fn stable_hash(value: impl Hash) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
 }

@@ -4,11 +4,21 @@ version = "0.1.0"
 edition = "2024"
 description = "Behavioral composition layer for the agents-world ecosystem"
 license = "MIT OR Apache-2.0"
+publish = false
 
 [lib]
-name = "agents_soul"
 path = "src/lib.rs"
 
 [[bin]]
 name = "agents-soul"
 path = "src/main.rs"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.6", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+toml = "0.8"
+
+[dev-dependencies]
