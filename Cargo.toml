@@ -1,0 +1,14 @@
+[package]
+name = "agents-soul"
+version = "0.1.0"
+edition = "2024"
+description = "Behavioral composition layer for the agents-world ecosystem"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "agents_soul"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agents-soul"
+path = "src/main.rs"
