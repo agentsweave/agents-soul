@@ -41,14 +41,23 @@ impl ComposeModeService {
         max_chars: usize,
     ) -> String {
         let prefix = match compose_mode {
-            ComposeMode::FailClosed => {
-                "Registry standing does not permit normal operation. Do not act autonomously; explain the restriction and escalate to the operator."
-                    .to_owned()
-            }
-            ComposeMode::Restricted => {
-                "Operate in restricted mode. Ask for operator confirmation before risky, stateful, or autonomous actions."
-                    .to_owned()
-            }
+            ComposeMode::FailClosed => [
+                "Identity revoked. Do not continue normal autonomous operation.",
+                "Do not present yourself as an active verified agent.",
+                "State the problem plainly.",
+                "Ask for operator intervention.",
+                "Do not take on new commitments.",
+                "Do not claim registry validity.",
+            ]
+            .join("\n"),
+            ComposeMode::Restricted => [
+                "Identity suspended. Operate in restricted advisory mode only.",
+                "Lower initiative.",
+                "Avoid high-risk actions.",
+                "Surface uncertainty clearly.",
+                "Request operator confirmation before consequential changes.",
+            ]
+            .join("\n"),
             ComposeMode::Degraded => {
                 "Operate cautiously. Upstream identity or registry inputs are degraded, so autonomy and confidence must be reduced."
                     .to_owned()
@@ -176,5 +185,23 @@ mod tests {
 
         let service = ComposeModeService;
         assert_eq!(service.resolve(&normalized), ComposeMode::Restricted);
+    }
+
+    #[test]
+    fn prompt_prefix_uses_plan_aligned_fail_closed_guidance() {
+        let prefix = ComposeModeService.prompt_prefix(ComposeMode::FailClosed, "Alpha", 512);
+
+        assert!(prefix.starts_with("Identity revoked."));
+        assert!(prefix.contains("Do not take on new commitments."));
+        assert!(prefix.contains("Do not claim registry validity."));
+    }
+
+    #[test]
+    fn prompt_prefix_uses_plan_aligned_restricted_guidance() {
+        let prefix = ComposeModeService.prompt_prefix(ComposeMode::Restricted, "Alpha", 512);
+
+        assert!(prefix.starts_with("Identity suspended."));
+        assert!(prefix.contains("Lower initiative."));
+        assert!(prefix.contains("Request operator confirmation"));
     }
 }

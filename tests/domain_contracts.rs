@@ -103,3 +103,24 @@ fn behavioral_context_carries_typed_status_information() {
     assert_eq!(context.warnings.len(), 1);
     assert_eq!(context.warnings[0].severity, WarningSeverity::Severe);
 }
+
+#[test]
+fn compatibility_modules_point_at_canonical_contract_types() {
+    let request = agents_soul::domain::compose::ComposeRequest::new("alpha", "session-1");
+    let warning = agents_soul::domain::context::BehavioralWarning {
+        severity: agents_soul::domain::context::WarningSeverity::Caution,
+        code: "degraded".to_owned(),
+        message: "Using fallback inputs.".to_owned(),
+    };
+    let context = agents_soul::domain::context::BehavioralContext {
+        warnings: vec![warning],
+        ..BehavioralContext::default()
+    };
+
+    assert_eq!(request.agent_id, "alpha");
+    assert_eq!(context.warnings.len(), 1);
+    assert_eq!(
+        context.status_summary.compose_mode,
+        agents_soul::domain::compose::ComposeMode::BaselineOnly
+    );
+}

@@ -1,6 +1,8 @@
 pub mod adaptation;
 pub mod behavioral_context;
+pub mod compose;
 pub mod config;
+pub mod context;
 pub mod errors;
 pub mod heuristics;
 pub mod inputs;
@@ -24,7 +26,10 @@ pub use inputs::{
     BehaviorInputs, ComposeRequest, NormalizedInputs, RelationshipMarker, ReputationSummary,
     SessionIdentitySnapshot, VerificationResult,
 };
-pub use interactions::InteractionEvent;
+pub use interactions::{
+    AdaptiveTrait, HeuristicInstructionSignal, HeuristicPrioritySignal, HeuristicToggleSignal,
+    InteractionEvent, InteractionOutcome, InteractionSignal, SignalDirection, TraitSignal,
+};
 pub use limits::{OfflineRegistryBehavior, RevokedBehavior, SoulLimits};
 pub use profile::PersonalityProfile;
 pub use provenance::ProvenanceReport;

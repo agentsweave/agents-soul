@@ -81,7 +81,39 @@ impl ComposeService {
         normalized: NormalizedInputs,
         status_summary: StatusSummary,
     ) -> BehavioralContext {
-        self.render_context(normalized, status_summary, ComposeMode::FailClosed)
+        let profile_name = normalized.profile_name.clone();
+        let prompt_prefix = ComposeModeService.prompt_prefix(
+            ComposeMode::FailClosed,
+            &profile_name,
+            normalized.soul_config.limits.max_prompt_prefix_chars,
+        );
+        let fail_closed_inputs = fail_closed_inputs(&normalized);
+
+        BehavioralContext {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            agent_id: normalized.agent_id.clone(),
+            profile_name,
+            status_summary,
+            trait_profile: EffectiveProfileService
+                .derive(&fail_closed_inputs, ComposeMode::FailClosed),
+            communication_rules: vec![
+                "State the fail-closed state plainly.".to_owned(),
+                "Do not present yourself as an active verified agent.".to_owned(),
+                "Ask for operator intervention before any further action.".to_owned(),
+                "Do not take on new commitments or claim registry validity.".to_owned(),
+            ],
+            decision_rules: vec![
+                "Do not continue normal autonomous operation.".to_owned(),
+                "Decline to take new commitments until the operator restores registry standing."
+                    .to_owned(),
+            ],
+            active_commitments: Vec::new(),
+            relationship_context: Vec::new(),
+            adaptive_notes: Vec::new(),
+            warnings: WarningService.derive(&normalized, ComposeMode::FailClosed),
+            system_prompt_prefix: prompt_prefix,
+            provenance: ProvenanceService.build(&normalized),
+        }
     }
 
     fn build_restricted_context(
@@ -136,6 +168,13 @@ fn load_config_for_request(request: &ComposeRequest) -> Result<SoulConfig, Servi
     })
 }
 
+fn fail_closed_inputs(normalized: &NormalizedInputs) -> NormalizedInputs {
+    let mut fail_closed = normalized.clone();
+    fail_closed.adaptation_state = Default::default();
+    fail_closed.soul_config.adaptation.enabled = false;
+    fail_closed
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -148,11 +187,16 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     use crate::{
-        domain::{AdaptationConfig, DecisionHeuristic, SoulConfig},
+        domain::{
+            AdaptationConfig, AdaptationState, BehaviorInputs, ComposeMode, ComposeRequest,
+            DecisionHeuristic, PersonalityOverride, RecoveryState, RegistryStatus,
+            RelationshipMarker, SessionIdentitySnapshot, SoulConfig, VerificationResult,
+        },
+        sources::normalize::normalize_inputs,
         storage::sqlite::{AdaptationStateRecord, open_database, upsert_adaptation_state},
     };
 
-    use super::{ComposeRequest, ComposeService};
+    use super::ComposeService;
 
     #[test]
     fn compose_uses_effective_adaptive_overrides_from_workspace_storage()
@@ -240,6 +284,79 @@ mod tests {
 
         cleanup_workspace(&workspace)?;
         Ok(())
+    }
+
+    #[test]
+    fn revoked_input_short_circuits_to_minimal_fail_closed_context() {
+        let request = ComposeRequest::new("agent.alpha", "session.alpha");
+        let mut config = SoulConfig {
+            agent_id: "agent.alpha".to_owned(),
+            profile_name: "Alpha".to_owned(),
+            ..SoulConfig::default()
+        };
+        config.adaptation.enabled = true;
+
+        let normalized = normalize_inputs(
+            &request,
+            BehaviorInputs {
+                soul_config: config,
+                identity_snapshot: Some(SessionIdentitySnapshot {
+                    agent_id: "agent.alpha".to_owned(),
+                    display_name: Some("Alpha".to_owned()),
+                    recovery_state: RecoveryState::Healthy,
+                    active_commitments: vec!["protect the operator".to_owned()],
+                    durable_preferences: Vec::new(),
+                    relationship_markers: vec![RelationshipMarker {
+                        subject: "operator".to_owned(),
+                        marker: "trusted".to_owned(),
+                        note: Some("primary owner".to_owned()),
+                    }],
+                    facts: Vec::new(),
+                    warnings: Vec::new(),
+                    fingerprint: None,
+                }),
+                verification_result: Some(VerificationResult {
+                    status: RegistryStatus::Revoked,
+                    standing_level: Some("revoked".to_owned()),
+                    reason_code: Some("policy".to_owned()),
+                    verified_at: Some(Utc::now()),
+                }),
+                adaptation_state: AdaptationState {
+                    trait_overrides: PersonalityOverride {
+                        initiative: 0.30,
+                        verbosity: 0.40,
+                        ..PersonalityOverride::default()
+                    },
+                    notes: vec!["adapted note".to_owned()],
+                    ..AdaptationState::default()
+                },
+                generated_at: Utc::now(),
+                ..BehaviorInputs::default()
+            },
+        )
+        .expect("normalized inputs");
+
+        let context = ComposeService.build_context(normalized);
+
+        assert_eq!(context.status_summary.compose_mode, ComposeMode::FailClosed);
+        assert!(
+            context
+                .system_prompt_prefix
+                .starts_with("Identity revoked.")
+        );
+        assert_eq!(context.communication_rules.len(), 4);
+        assert_eq!(context.decision_rules.len(), 2);
+        assert!(context.active_commitments.is_empty());
+        assert!(context.relationship_context.is_empty());
+        assert!(context.adaptive_notes.is_empty());
+        assert!(context.trait_profile.initiative <= 0.05);
+        assert!(context.trait_profile.verbosity <= 0.25);
+        assert!(
+            context
+                .warnings
+                .iter()
+                .any(|warning| warning.code == "registry_revoked")
+        );
     }
 
     fn test_workspace(label: &str) -> PathBuf {
