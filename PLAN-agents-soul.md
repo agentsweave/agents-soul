@@ -3839,3 +3839,253 @@ pub struct ComposeCmd {
     pub json: bool,
 }
 ```
+
+---
+
+## 53. Executable Draft: Normalization and Cache
+
+```rust
+#[derive(Debug, Clone)]
+pub struct NormalizedInputs {
+    pub agent_id: String,
+    pub profile_name: String,
+    pub config: SoulConfig,
+    pub identity: Option<SessionIdentitySnapshot>,
+    pub verification: Option<VerificationResult>,
+    pub reputation: Option<ReputationSummary>,
+    pub adaptation: AdaptationState,
+}
+
+impl NormalizedInputs {
+    pub fn registry_status(&self) -> Option<&str> {
+        self.verification.as_ref().map(|it| it.status.as_str())
+    }
+
+    pub fn contributors_for(&self, field: &str) -> Vec<String> {
+        let mut out = vec![format!("baseline from soul config for {field}")];
+        if let Some(identity) = &self.identity {
+            out.push(format!("identity recovery state = {}", identity.recovery_state));
+        }
+        if let Some(verification) = &self.verification {
+            out.push(format!("registry status = {}", verification.status));
+        }
+        out.extend(self.adaptation.notes.clone());
+        out
+    }
+}
+
+pub fn normalize_inputs(inputs: BehaviorInputs) -> Result<NormalizedInputs, SoulError> {
+    Ok(NormalizedInputs {
+        agent_id: inputs.soul_config.agent_id.clone(),
+        profile_name: inputs.soul_config.profile_name.clone(),
+        config: inputs.soul_config,
+        identity: inputs.identity_snapshot,
+        verification: inputs.verification_result,
+        reputation: inputs.reputation_summary,
+        adaptation: inputs.adaptation_state,
+    })
+}
+```
+
+### 53.1 Cache key
+
+```rust
+pub fn build_cache_key(normalized: &NormalizedInputs) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(normalized.agent_id.as_bytes());
+    hasher.update(normalized.profile_name.as_bytes());
+    if let Some(identity) = &normalized.identity {
+        hasher.update(identity.fingerprint_blake3.as_bytes());
+        hasher.update(identity.recovery_state.as_bytes());
+    }
+    if let Some(verification) = &normalized.verification {
+        hasher.update(verification.status.as_bytes());
+        hasher.update(verification.reason_code.as_bytes());
+    }
+    for note in &normalized.adaptation.notes {
+        hasher.update(note.as_bytes());
+    }
+    hasher.finalize().to_hex().to_string()
+}
+```
+
+---
+
+## 54. Executable Draft: REST Handlers and SQLite Store
+
+```rust
+pub async fn api_compose(
+    State(state): State<AppState>,
+    Json(req): Json<ComposeRequest>,
+) -> Result<Json<BehavioralContext>, ApiError> {
+    let context = state.services.compose.compose(req).await.map_err(api_map_error)?;
+    Ok(Json(context))
+}
+
+pub async fn api_record_interaction(
+    State(state): State<AppState>,
+    Json(event): Json<InteractionEvent>,
+) -> Result<StatusCode, ApiError> {
+    state.services.adaptation.record_interaction(event).map_err(api_map_error)?;
+    Ok(StatusCode::CREATED)
+}
+```
+
+### 54.1 SQLite store
+
+```rust
+pub struct SqliteAdaptationStore {
+    conn: rusqlite::Connection,
+}
+
+impl AdaptationStore for SqliteAdaptationStore {
+    fn load_current(&self, agent_id: &str) -> Result<AdaptationState, SoulError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT overrides_json, notes_json FROM adaptation_state WHERE agent_id = ?1"
+        ).map_err(|err| SoulError::Storage(err.to_string()))?;
+
+        let row = stmt.query_row([agent_id], |row| {
+            let overrides_json: String = row.get(0)?;
+            let notes_json: String = row.get(1)?;
+            Ok((overrides_json, notes_json))
+        });
+
+        match row {
+            Ok((overrides_json, notes_json)) => {
+                let mut state = AdaptationState::default();
+                state.notes = serde_json::from_str(&notes_json).unwrap_or_default();
+                state.trait_overrides = serde_json::from_str(&overrides_json).unwrap_or_default();
+                Ok(state)
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(AdaptationState::default()),
+            Err(err) => Err(SoulError::Storage(err.to_string())),
+        }
+    }
+
+    fn record_interaction(&self, event: InteractionEvent) -> Result<(), SoulError> {
+        self.conn.execute(
+            "INSERT INTO interaction_events (event_id, agent_id, signal_kind, signal_value, context_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                event.event_id,
+                event.agent_id,
+                event.signal_kind,
+                event.signal_value,
+                event.context_json.to_string(),
+                event.created_at.to_rfc3339(),
+            ],
+        ).map_err(|err| SoulError::Storage(err.to_string()))?;
+        Ok(())
+    }
+
+    fn reset(&self, agent_id: &str) -> Result<(), SoulError> {
+        self.conn.execute(
+            "DELETE FROM adaptation_state WHERE agent_id = ?1",
+            [agent_id],
+        ).map_err(|err| SoulError::Storage(err.to_string()))?;
+        Ok(())
+    }
+}
+```
+
+---
+
+## 55. Executable Draft: MCP Tools and Template Tests
+
+```rust
+pub async fn soul_get_system_prompt_prefix(
+    ctx: ToolContext,
+    args: ComposeRequest,
+) -> Result<String, McpError> {
+    let context = ctx.services.compose.compose(args).await.map_err(mcp_map_error)?;
+    Ok(context.system_prompt_prefix)
+}
+
+pub async fn soul_record_interaction(
+    ctx: ToolContext,
+    args: InteractionEvent,
+) -> Result<serde_json::Value, McpError> {
+    ctx.services.adaptation.record_interaction(args).map_err(mcp_map_error)?;
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+pub async fn soul_reset_adaptations(
+    ctx: ToolContext,
+    args: ResetRequest,
+) -> Result<serde_json::Value, McpError> {
+    ctx.services.adaptation.reset(&args.agent_id).map_err(mcp_map_error)?;
+    Ok(serde_json::json!({ "ok": true }))
+}
+```
+
+### 55.1 Template tests
+
+```rust
+#[test]
+fn prefix_renderer_returns_fail_closed_for_revoked_identity() {
+    let normalized = revoked_normalized_fixture();
+    let prefix = render_prefix(
+        &normalized,
+        &normalized.config.trait_baseline,
+        &[],
+        &[],
+        &["Identity revoked".into()],
+    ).unwrap();
+    assert!(prefix.contains("Identity revoked"));
+}
+
+#[test]
+fn cache_key_changes_when_registry_status_changes() {
+    let mut healthy = healthy_normalized_fixture();
+    let before = build_cache_key(&healthy);
+    healthy.verification.as_mut().unwrap().status = "suspended".into();
+    let after = build_cache_key(&healthy);
+    assert_ne!(before, after);
+}
+```
+
+---
+
+## 56. Executable Draft: Heuristic Reducer
+
+```rust
+pub fn derive_decision_rules(
+    normalized: &NormalizedInputs,
+    profile: &PersonalityProfile,
+) -> Vec<String> {
+    let mut rules = Vec::new();
+
+    for heuristic in &normalized.config.decision_heuristics {
+        if heuristic.enabled {
+            rules.push(heuristic.instruction.clone());
+        }
+    }
+
+    if profile.risk_tolerance < 0.25 {
+        rules.push("Prefer verification before consequential actions.".into());
+    }
+    if matches!(normalized.registry_status(), Some("suspended")) {
+        rules.push("Ask for operator confirmation before lasting changes.".into());
+    }
+
+    rules
+}
+```
+
+### 56.1 Template loader
+
+```rust
+pub struct TemplateEngine {
+    env: minijinja::Environment<'static>,
+}
+
+impl TemplateEngine {
+    pub fn load_default() -> Result<Self, SoulError> {
+        let mut env = minijinja::Environment::new();
+        env.add_template("prefix", include_str!("../templates/prefix.j2"))
+            .map_err(|err| SoulError::InvalidConfig(err.to_string()))?;
+        env.add_template("full", include_str!("../templates/full.j2"))
+            .map_err(|err| SoulError::InvalidConfig(err.to_string()))?;
+        Ok(Self { env })
+    }
+}
+```
