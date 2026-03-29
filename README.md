@@ -51,6 +51,36 @@ Workspace contract still requires:
 
 `.soul/context_cache.json` remains optional and disposable authority-wise.
 
+## Operator Quickstart
+
+Use the shipped workspace examples as starting points for real operator workflows:
+
+```bash
+mkdir -p ~/.souls/alpha/.soul
+cp examples/workspaces/healthy/soul.toml ~/.souls/alpha/soul.toml
+: > ~/.souls/alpha/.soul/patterns.sqlite
+: > ~/.souls/alpha/.soul/adaptation_log.jsonl
+```
+
+After the workspace contract exists, the live CLI surface is:
+
+```bash
+agents-soul inspect --workspace ~/.souls/alpha --json
+agents-soul compose --workspace ~/.souls/alpha --json
+agents-soul compose --workspace ~/.souls/alpha --prefix-only
+agents-soul explain --workspace ~/.souls/alpha --json
+agents-soul configure --workspace ~/.souls/alpha --trait openness 0.80
+agents-soul record --workspace ~/.souls/alpha --interaction-type review --outcome positive
+agents-soul reset --workspace ~/.souls/alpha --scope trait --target openness
+```
+
+Operational notes:
+
+- `configure` rewrites the full `soul.toml` in canonical TOML; comments and table layout are not preserved.
+- `record` and `reset` will initialize `.soul/patterns.sqlite` if it is empty or missing.
+- `.soul/context_cache.json` may be created by compose/read paths; it can be deleted at any time because it is not authoritative.
+- The example workspaces cover config posture only. Restricted and fail-closed behavior are driven by upstream registry state, not by a local workspace toggle.
+
 ## Top-Level Layout
 
 - `src/app`: application wiring and runtime bootstrap
@@ -77,6 +107,29 @@ This boundary exists so CLI, REST, and MCP stay thin and all behavior flows thro
 - clock access and provenance hashing
 - transport error mapping via `map_soul_error`
 Failure semantics are centralized in `SoulError` plus `map_soul_error`, so CLI exit codes, HTTP responses, and MCP tool failures stay consistent across transports.
+
+## Compose-Mode Runbook
+
+Use `inspect --warnings --provenance --json`, `compose --json`, and `explain --json` together when a session is not behaving as expected.
+
+- Normal:
+  Upstream identity and registry inputs are available and verified. Full commitments, relationships, heuristics, and adaptive notes can flow into the rendered context.
+- Restricted:
+  Triggered by `registry=suspended`. Expect warning codes including `registry_suspended` and `compose_restricted`, plus a prompt prefix that starts with `RESTRICTED:`.
+- Degraded:
+  Triggered when upstream inputs are partial or degraded. Expect reduced initiative and warning codes such as `compose_degraded`, `identity_degraded`, and `reputation_unavailable`.
+- Baseline-only:
+  Triggered when identity inputs are unavailable but registry verification still succeeds. Expect warning codes `baseline_only`, `identity_unavailable`, and `reputation_unavailable`, with commitments and relationship context left empty.
+- Fail-closed:
+  Triggered by `registry=revoked`. Expect warning codes `registry_revoked` and `compose_fail_closed`, a prompt prefix that starts with `FAIL-CLOSED:`, and stripped commitments, relationships, and adaptive notes.
+
+When diagnosing a degraded or fail-closed session:
+
+- Check whether the workspace still has `soul.toml`, `.soul/patterns.sqlite`, and `.soul/adaptation_log.jsonl`.
+- Re-run with explicit fixture or snapshot paths if you need to isolate upstream input problems:
+  `agents-soul compose --workspace ~/.souls/alpha --identity-snapshot /tmp/identity.json --registry-verification /tmp/verification.json --registry-reputation /tmp/reputation.json --json`
+- Treat `.soul/context_cache.json` as disposable. Delete it if you suspect stale cache state, then rerun `inspect` or `compose`.
+- Do not try to "fix" fail-closed in this repo. A revoked result must stay revoked until upstream registry state changes.
 
 ## Validation Commands
 

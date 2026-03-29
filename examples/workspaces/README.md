@@ -21,12 +21,51 @@ also requires:
 
 `.soul/context_cache.json` is optional and disposable.
 
+## Bootstrap From An Example
+
+To turn an example into a runnable workspace:
+
+```bash
+mkdir -p ~/.souls/alpha/.soul
+cp examples/workspaces/healthy/soul.toml ~/.souls/alpha/soul.toml
+: > ~/.souls/alpha/.soul/patterns.sqlite
+: > ~/.souls/alpha/.soul/adaptation_log.jsonl
+```
+
+The empty `patterns.sqlite` file is sufficient; `record` and `reset` will
+initialize the schema on first write.
+
 ## Notes For Operators
 
 - `sources.registry_agent_id` may be omitted; it defaults to `agent_id`
   at load finalization time.
 - Config persistence currently rewrites the full file in canonical TOML and
   does not preserve comments or original table layout.
+- There is no separate `revoked/` workspace example because fail-closed mode is
+  driven by upstream registry verification state, not by a local workspace flag.
+
+## Exercise The Examples
+
+These commands match the current CLI contract:
+
+```bash
+agents-soul inspect --workspace ~/.souls/alpha --json
+agents-soul compose --workspace ~/.souls/alpha --json
+agents-soul compose --workspace ~/.souls/alpha --prefix-only
+agents-soul explain --workspace ~/.souls/alpha --json
+agents-soul configure --workspace ~/.souls/alpha --trait directness 0.85
+agents-soul record --workspace ~/.souls/alpha --interaction-type review --outcome positive
+agents-soul reset --workspace ~/.souls/alpha --scope trait --target directness
+```
+
+Recommended usage:
+
+- `minimal/` proves the shortest valid config and the default
+  `sources.registry_agent_id` behavior.
+- `healthy/` is the full authoring reference for traits, style, heuristics,
+  limits, templates, and adaptation.
+- `degraded/` is the operator reference for offline-safe posture with
+  `offline_registry_behavior = "baseline-only"` and adaptation disabled.
 
 ## Default Values
 
