@@ -26,6 +26,7 @@ struct Cli {
 enum CliCommand {
     Compose(compose::ComposeCmd),
     Configure(ConfigureCmd),
+    Explain(explain::ExplainCmd),
     Inspect(inspect::InspectCmd),
     Record(record::RecordCmd),
     Reset(reset::ResetCmd),
@@ -103,6 +104,14 @@ fn execute(cli: Cli, config: &ApplicationConfig, deps: &AppDeps) -> Result<(), S
             let workspace = cmd.workspace;
             let updated = configure::update_traits(deps, workspace, patch)?;
             print_json(&updated)
+        }
+        CliCommand::Explain(cmd) => {
+            let presentation = explain::explain_cmd(deps, cmd)?;
+            if let Some(rendered) = presentation.rendered {
+                print_text(&rendered)
+            } else {
+                print_json(&presentation.output)
+            }
         }
         CliCommand::Inspect(cmd) => {
             let output = inspect::inspect_cmd(deps, cmd)?;
@@ -370,6 +379,90 @@ mod tests {
                 }
             }
             other => return Err(format!("expected traits projection, got {other:?}").into()),
+        }
+
+        cleanup_workspace(&workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn compose_command_supports_prefix_only_output() -> Result<(), Box<dyn Error>> {
+        let workspace = test_workspace("cli-compose-prefix");
+        fs::create_dir_all(workspace.join(".soul"))?;
+        write_soul_config(&workspace, "agent.alpha", "Alpha")?;
+        write_identity_snapshot(&workspace)?;
+        write_registry_verification(&workspace)?;
+        write_registry_reputation(&workspace)?;
+
+        let presentation = compose::compose_cmd(
+            &AppDeps::default(),
+            compose::ComposeCmd {
+                workspace: workspace.to_string_lossy().into_owned(),
+                json: false,
+                prefix_only: true,
+                identity_snapshot_path: None,
+                registry_verification_path: None,
+                registry_reputation_path: None,
+                no_reputation: false,
+                no_relationships: false,
+                no_commitments: false,
+                session_id: "session.alpha".into(),
+            },
+        )?;
+
+        let rendered = presentation
+            .rendered
+            .ok_or("expected rendered prefix-only output")?;
+        match presentation.output {
+            compose::ComposeOutput::Prefix(prefix) => {
+                if prefix.system_prompt_prefix != rendered {
+                    return Err("prefix-only rendered output diverged from payload".into());
+                }
+            }
+            other => {
+                return Err(format!("expected prefix output, got {other:?}").into());
+            }
+        }
+
+        cleanup_workspace(&workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn explain_command_renders_report_by_default() -> Result<(), Box<dyn Error>> {
+        let workspace = test_workspace("cli-explain");
+        fs::create_dir_all(workspace.join(".soul"))?;
+        write_soul_config(&workspace, "agent.alpha", "Alpha")?;
+        write_identity_snapshot(&workspace)?;
+        write_registry_verification(&workspace)?;
+        write_registry_reputation(&workspace)?;
+
+        let presentation = explain::explain_cmd(
+            &AppDeps::default(),
+            explain::ExplainCmd {
+                workspace: workspace.to_string_lossy().into_owned(),
+                json: false,
+                identity_snapshot_path: None,
+                registry_verification_path: None,
+                registry_reputation_path: None,
+                no_reputation: false,
+                no_relationships: false,
+                no_commitments: false,
+                session_id: "session.alpha".into(),
+            },
+        )?;
+
+        let rendered = presentation
+            .rendered
+            .ok_or("expected rendered explain report")?;
+        if !rendered.contains("## Status Summary") {
+            return Err("explain output missing status summary section".into());
+        }
+        if !rendered.contains("## Provenance") {
+            return Err("explain output missing provenance section".into());
+        }
+        if presentation.output.rendered != rendered {
+            return Err("explain rendered output diverged from payload".into());
         }
 
         cleanup_workspace(&workspace)?;
