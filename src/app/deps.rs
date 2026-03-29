@@ -3,7 +3,11 @@ use std::{fmt, sync::Arc};
 use chrono::{DateTime, Utc};
 
 use crate::{
-    adaptation::{EffectiveOverrideSet, read_workspace_effective_overrides},
+    adaptation::{
+        AdaptiveResetRequest, AdaptiveResetResult, EffectiveOverrideSet, InteractionRecordRequest,
+        InteractionRecordResult, read_workspace_effective_overrides, record_workspace_interaction,
+        reset_workspace_adaptation_state,
+    },
     app::config::load_soul_config,
     app::errors::{SoulTransportError, map_soul_error},
     domain::{
@@ -154,6 +158,24 @@ impl AppDeps {
         self.services
             .workspace_config
             .patch_workspace(workspace_root, patch)
+    }
+
+    pub fn record_interaction(
+        &self,
+        workspace_root: impl Into<std::path::PathBuf>,
+        request: &InteractionRecordRequest,
+    ) -> Result<InteractionRecordResult, SoulError> {
+        let workspace_root = workspace_root.into();
+        let config = self.load_soul_config(&workspace_root.display().to_string())?;
+        record_workspace_interaction(&workspace_root, &config, request)
+    }
+
+    pub fn reset_adaptation_state(
+        &self,
+        workspace_root: impl Into<std::path::PathBuf>,
+        request: &AdaptiveResetRequest,
+    ) -> Result<AdaptiveResetResult, SoulError> {
+        reset_workspace_adaptation_state(workspace_root.into(), request)
     }
 
     pub fn map_error(&self, error: &SoulError) -> SoulTransportError {
