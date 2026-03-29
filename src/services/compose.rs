@@ -482,9 +482,9 @@ mod tests {
         app::deps::{AdaptationStateLoader, AppDeps, ComposeClock, SoulConfigLoader},
         domain::{
             AdaptationConfig, AdaptationState, BehaviorInputs, ComposeMode, ComposeRequest,
-            DecisionHeuristic, NormalizedInputs, PersonalityOverride, PersonalityProfile,
-            RecoveryState, RegistryStatus, RelationshipMarker, ReputationSummary,
-            SessionIdentitySnapshot, SoulConfig, SoulError, VerificationResult,
+            DecisionHeuristic, InputSourceKind, NormalizedInputs, PersonalityOverride,
+            PersonalityProfile, RecoveryState, RegistryStatus, RelationshipMarker,
+            ReputationSummary, SessionIdentitySnapshot, SoulConfig, SoulError, VerificationResult,
         },
         services::{provenance::ProvenanceHasher, templates::PromptTemplateRenderer},
         sources::cache::{
@@ -1137,6 +1137,210 @@ mod tests {
         assert!(context.adaptive_notes.is_empty());
 
         cleanup_workspace(&workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn compose_uses_fresh_cache_when_authoritative_inputs_are_unchanged()
+    -> Result<(), Box<dyn Error>> {
+        let workspace = test_workspace("compose-cache-hit");
+        fs::create_dir_all(workspace.join(".soul"))?;
+        write_soul_config(&workspace, "agent.alpha", "Alpha")?;
+        let deps = crate::app::deps::AppDeps::default().with_provenance_hasher(StubHasher);
+        let verified_at = test_timestamp(2026, 3, 29, 11, 0, 0)?;
+        let request = ComposeRequest {
+            workspace_id: workspace.display().to_string(),
+            agent_id: "agent.alpha".to_owned(),
+            session_id: "session.alpha".to_owned(),
+            identity_snapshot_path: None,
+            registry_verification_path: None,
+            registry_reputation_path: None,
+            include_reputation: true,
+            include_relationships: true,
+            include_commitments: true,
+        };
+        write_cached_inputs(
+            &request,
+            &CachedInputs {
+                cache_key: None,
+                freshness: Some(CachedFreshness {
+                    config_hash: Some("cfg_deps".to_owned()),
+                    adaptation_hash: Some("adp_deps".to_owned()),
+                    identity_fingerprint: Some("id_deps".to_owned()),
+                    registry_verification_at: Some(verified_at),
+                }),
+                identity_snapshot: Some(SessionIdentitySnapshot {
+                    agent_id: "agent.alpha".to_owned(),
+                    display_name: Some("Alpha".to_owned()),
+                    recovery_state: RecoveryState::Healthy,
+                    active_commitments: vec!["cached commitment".to_owned()],
+                    durable_preferences: Vec::new(),
+                    relationship_markers: Vec::new(),
+                    facts: Vec::new(),
+                    warnings: Vec::new(),
+                    fingerprint: Some("id_deps".to_owned()),
+                }),
+                verification_result: Some(VerificationResult {
+                    status: RegistryStatus::Active,
+                    standing_level: Some("good".to_owned()),
+                    reason_code: None,
+                    verified_at: Some(verified_at),
+                }),
+                reputation_summary: Some(ReputationSummary {
+                    score_total: Some(4.7),
+                    score_recent_30d: Some(4.5),
+                    last_event_at: Some(verified_at),
+                    context: vec!["cached reputation".to_owned()],
+                }),
+            },
+        )?;
+
+        let context = ComposeService.compose(&deps, request)?;
+
+        assert_eq!(context.status_summary.compose_mode, ComposeMode::Normal);
+        assert!(context.status_summary.identity_loaded);
+        assert!(context.status_summary.registry_verified);
+        assert_eq!(context.provenance.identity_source, InputSourceKind::Cache);
+        assert_eq!(
+            context.provenance.verification_source,
+            InputSourceKind::Cache
+        );
+        assert_eq!(context.provenance.reputation_source, InputSourceKind::Cache);
+        assert!(
+            context
+                .active_commitments
+                .iter()
+                .any(|commitment| commitment.contains("cached commitment"))
+        );
+        assert!(
+            !context
+                .warnings
+                .iter()
+                .any(|warning| warning.code == "context_cache_stale")
+        );
+
+        cleanup_workspace(&workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn compose_warns_and_falls_back_when_context_cache_is_invalid() -> Result<(), Box<dyn Error>> {
+        let workspace = test_workspace("compose-cache-invalid");
+        fs::create_dir_all(workspace.join(".soul"))?;
+        write_soul_config(&workspace, "agent.alpha", "Alpha")?;
+        fs::write(workspace.join(".soul/context_cache.json"), "{not-json")?;
+
+        let context = ComposeService.compose(
+            &crate::app::deps::AppDeps::default(),
+            ComposeRequest {
+                workspace_id: workspace.display().to_string(),
+                agent_id: "agent.alpha".to_owned(),
+                session_id: "session.alpha".to_owned(),
+                identity_snapshot_path: None,
+                registry_verification_path: None,
+                registry_reputation_path: None,
+                include_reputation: true,
+                include_relationships: true,
+                include_commitments: true,
+            },
+        )?;
+
+        assert_eq!(
+            context.status_summary.compose_mode,
+            ComposeMode::BaselineOnly
+        );
+        assert!(!context.status_summary.identity_loaded);
+        assert!(!context.status_summary.registry_verified);
+        assert!(
+            context
+                .warnings
+                .iter()
+                .any(|warning| warning.code == "context_cache_invalid")
+        );
+
+        cleanup_workspace(&workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn compose_live_registry_terminal_states_override_cached_verification()
+    -> Result<(), Box<dyn Error>> {
+        let cases = [
+            (
+                "suspended",
+                ComposeMode::Restricted,
+                RegistryStatus::Suspended,
+            ),
+            ("revoked", ComposeMode::FailClosed, RegistryStatus::Revoked),
+        ];
+
+        for (status, expected_mode, expected_registry_status) in cases {
+            let workspace = test_workspace(&format!("compose-cache-live-{status}"));
+            fs::create_dir_all(workspace.join(".soul"))?;
+            write_soul_config(&workspace, "agent.alpha", "Alpha")?;
+            fs::write(
+                workspace.join("registry_verification.json"),
+                format!(r#"{{"status":"{status}","standing_level":"watch"}}"#),
+            )?;
+
+            let deps = crate::app::deps::AppDeps::default().with_provenance_hasher(StubHasher);
+            let request = ComposeRequest {
+                workspace_id: workspace.display().to_string(),
+                agent_id: "agent.alpha".to_owned(),
+                session_id: "session.alpha".to_owned(),
+                identity_snapshot_path: None,
+                registry_verification_path: None,
+                registry_reputation_path: None,
+                include_reputation: true,
+                include_relationships: true,
+                include_commitments: true,
+            };
+            write_cached_inputs(
+                &request,
+                &CachedInputs {
+                    cache_key: None,
+                    freshness: Some(CachedFreshness {
+                        config_hash: Some("cfg_deps".to_owned()),
+                        adaptation_hash: Some("adp_deps".to_owned()),
+                        identity_fingerprint: Some("id_deps".to_owned()),
+                        registry_verification_at: Some(test_timestamp(2026, 3, 29, 10, 0, 0)?),
+                    }),
+                    identity_snapshot: Some(SessionIdentitySnapshot {
+                        agent_id: "agent.alpha".to_owned(),
+                        display_name: Some("Alpha".to_owned()),
+                        recovery_state: RecoveryState::Healthy,
+                        active_commitments: vec!["cached commitment".to_owned()],
+                        durable_preferences: Vec::new(),
+                        relationship_markers: Vec::new(),
+                        facts: Vec::new(),
+                        warnings: Vec::new(),
+                        fingerprint: Some("id_deps".to_owned()),
+                    }),
+                    verification_result: Some(VerificationResult {
+                        status: RegistryStatus::Active,
+                        standing_level: Some("good".to_owned()),
+                        reason_code: None,
+                        verified_at: Some(test_timestamp(2026, 3, 29, 10, 0, 0)?),
+                    }),
+                    reputation_summary: None,
+                },
+            )?;
+
+            let context = ComposeService.compose(&deps, request)?;
+
+            assert_eq!(context.status_summary.compose_mode, expected_mode);
+            assert_eq!(
+                context.status_summary.registry_status,
+                Some(expected_registry_status)
+            );
+            assert_eq!(
+                context.provenance.verification_source,
+                InputSourceKind::Live
+            );
+
+            cleanup_workspace(&workspace)?;
+        }
+
         Ok(())
     }
 
