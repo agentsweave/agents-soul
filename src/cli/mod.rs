@@ -24,7 +24,9 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum CliCommand {
+    Compose(compose::ComposeCmd),
     Configure(ConfigureCmd),
+    Inspect(inspect::InspectCmd),
     Record(record::RecordCmd),
     Reset(reset::ResetCmd),
 }
@@ -88,11 +90,23 @@ where
 
 fn execute(cli: Cli, config: &ApplicationConfig, deps: &AppDeps) -> Result<(), SoulError> {
     match cli.command {
+        CliCommand::Compose(cmd) => {
+            let presentation = compose::compose_cmd(deps, cmd)?;
+            if let Some(rendered) = presentation.rendered {
+                print_text(&rendered)
+            } else {
+                print_json(&presentation.output)
+            }
+        }
         CliCommand::Configure(cmd) => {
             let patch = cmd.trait_patch()?;
             let workspace = cmd.workspace;
             let updated = configure::update_traits(deps, workspace, patch)?;
             print_json(&updated)
+        }
+        CliCommand::Inspect(cmd) => {
+            let output = inspect::inspect_cmd(deps, cmd)?;
+            print_json(&output)
         }
         CliCommand::Record(cmd) => {
             let result = record::record_cmd(deps, config, cmd)?;
@@ -125,6 +139,13 @@ where
     let stdout = io::stdout();
     let mut handle = stdout.lock();
     writeln!(handle, "{value:#?}").map_err(|error| SoulError::Internal(error.to_string()))
+}
+
+fn print_text(value: &str) -> Result<(), SoulError> {
+    use std::io::Write as _;
+    let stdout = io::stdout();
+    let mut handle = stdout.lock();
+    writeln!(handle, "{value}").map_err(|error| SoulError::Internal(error.to_string()))
 }
 
 #[cfg(test)]
@@ -264,6 +285,131 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn compose_command_renders_full_context_by_default() -> Result<(), Box<dyn Error>> {
+        let workspace = test_workspace("cli-compose");
+        fs::create_dir_all(workspace.join(".soul"))?;
+        write_soul_config(&workspace, "agent.alpha", "Alpha")?;
+        write_identity_snapshot(&workspace)?;
+        write_registry_verification(&workspace)?;
+        write_registry_reputation(&workspace)?;
+
+        let command = compose::ComposeCmd {
+            workspace: workspace.to_string_lossy().into_owned(),
+            json: false,
+            prefix_only: false,
+            identity_snapshot_path: None,
+            registry_verification_path: None,
+            registry_reputation_path: None,
+            no_reputation: false,
+            no_relationships: false,
+            no_commitments: false,
+            session_id: "session.alpha".into(),
+        };
+
+        let presentation = compose::compose_cmd(&AppDeps::default(), command)?;
+        let report = presentation
+            .rendered
+            .ok_or("expected rendered full-context report")?;
+
+        match presentation.output {
+            compose::ComposeOutput::Context(context) => {
+                if context.profile_name != "Alpha" {
+                    return Err("compose returned unexpected context profile".into());
+                }
+            }
+            compose::ComposeOutput::Prefix(_) => {
+                return Err("compose unexpectedly returned prefix-only output".into());
+            }
+        }
+        if !report.contains("Behavioral Context Alpha") {
+            return Err("compose rendered output missing report title".into());
+        }
+
+        cleanup_workspace(&workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn inspect_command_supports_traits_projection() -> Result<(), Box<dyn Error>> {
+        let workspace = test_workspace("cli-inspect");
+        fs::create_dir_all(workspace.join(".soul"))?;
+        write_soul_config(&workspace, "agent.alpha", "Alpha")?;
+        write_identity_snapshot(&workspace)?;
+        write_registry_verification(&workspace)?;
+        write_registry_reputation(&workspace)?;
+
+        let output = inspect::inspect_cmd(
+            &AppDeps::default(),
+            inspect::InspectCmd {
+                workspace: workspace.to_string_lossy().into_owned(),
+                json: true,
+                traits: true,
+                heuristics: false,
+                adaptations: false,
+                warnings: false,
+                provenance: false,
+                identity_snapshot_path: None,
+                registry_verification_path: None,
+                registry_reputation_path: None,
+                no_reputation: false,
+                no_relationships: false,
+                no_commitments: false,
+                session_id: "session.alpha".into(),
+            },
+        )?;
+
+        match output {
+            inspect::InspectOutput::Traits(traits) => {
+                if traits.entries.len() != 8 {
+                    return Err(format!(
+                        "expected 8 projected traits, found {}",
+                        traits.entries.len()
+                    )
+                    .into());
+                }
+            }
+            other => return Err(format!("expected traits projection, got {other:?}").into()),
+        }
+
+        cleanup_workspace(&workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn inspect_command_rejects_multiple_focused_views() -> Result<(), Box<dyn Error>> {
+        let result = inspect::inspect_cmd(
+            &AppDeps::default(),
+            inspect::InspectCmd {
+                workspace: "/tmp/unused".into(),
+                json: true,
+                traits: true,
+                heuristics: true,
+                adaptations: false,
+                warnings: false,
+                provenance: false,
+                identity_snapshot_path: None,
+                registry_verification_path: None,
+                registry_reputation_path: None,
+                no_reputation: false,
+                no_relationships: false,
+                no_commitments: false,
+                session_id: "session.alpha".into(),
+            },
+        );
+
+        let message = match result {
+            Err(SoulError::Validation(message)) => message,
+            Err(other) => format!("expected validation error, got {other}"),
+            Ok(_) => "expected validation error, got success".to_owned(),
+        };
+        if !message.contains("at most one focused projection flag") {
+            return Err(format!("unexpected validation message: {message}").into());
+        }
+
+        Ok(())
+    }
+
     fn scope_name(scope: ResetScope) -> &'static str {
         match scope {
             ResetScope::All => "all",
@@ -299,6 +445,47 @@ mod tests {
             ..crate::domain::SoulConfig::default()
         };
         fs::write(workspace.join("soul.toml"), toml::to_string(&config)?)?;
+        Ok(())
+    }
+
+    fn write_identity_snapshot(workspace: &Path) -> Result<(), Box<dyn Error>> {
+        fs::write(
+            workspace.join("session_identity_snapshot.json"),
+            r#"{
+  "agent_id":"agent.alpha",
+  "display_name":"Alpha",
+  "recovery_state":"healthy",
+  "active_commitments":["review queue"],
+  "durable_preferences":["lead with direct answers"],
+  "relationship_markers":[{"subject":"operators","marker":"trusted"}],
+  "facts":["prefers succinct status updates"],
+  "warnings":[]
+}"#,
+        )?;
+        Ok(())
+    }
+
+    fn write_registry_verification(workspace: &Path) -> Result<(), Box<dyn Error>> {
+        fs::write(
+            workspace.join("registry_verification.json"),
+            r#"{
+  "status":"active",
+  "standing_level":"good",
+  "reason_code":"ok"
+}"#,
+        )?;
+        Ok(())
+    }
+
+    fn write_registry_reputation(workspace: &Path) -> Result<(), Box<dyn Error>> {
+        fs::write(
+            workspace.join("registry_reputation.json"),
+            r#"{
+  "score_total":0.91,
+  "score_recent_30d":0.87,
+  "context":["steady operator feedback"]
+}"#,
+        )?;
         Ok(())
     }
 }
