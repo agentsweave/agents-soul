@@ -1,6 +1,6 @@
 use crate::domain::{
     CommunicationStyle, ComposeMode, ConflictStyle, FeedbackStyle, NormalizedInputs,
-    ParagraphBudget, QuestionStyle, RegisterStyle, UncertaintyStyle,
+    ParagraphBudget, QuestionStyle, RegisterStyle, RegistryStatus, UncertaintyStyle,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -33,6 +33,8 @@ impl CommunicationRulesService {
         }
 
         let mut rules = mode_rules(compose_mode);
+        rules.extend(standing_rules(normalized));
+        rules.extend(reputation_rules(normalized));
         rules.extend(style_rules(&style));
         rules
     }
@@ -62,6 +64,47 @@ fn mode_rules(compose_mode: ComposeMode) -> Vec<String> {
                 .to_owned(),
         ],
     }
+}
+
+fn standing_rules(normalized: &NormalizedInputs) -> Vec<String> {
+    match normalized
+        .upstream
+        .registry
+        .verification
+        .as_ref()
+        .map(|verification| verification.status)
+    {
+        Some(RegistryStatus::Pending) => vec![
+            "Describe registry standing as pending and keep guidance probationary until activation is confirmed."
+                .to_owned(),
+        ],
+        Some(RegistryStatus::Retired) => vec![
+            "Use historical or read-only framing; do not encourage new work or fresh commitments."
+                .to_owned(),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+fn reputation_rules(normalized: &NormalizedInputs) -> Vec<String> {
+    low_reputation_score(normalized)
+        .filter(|score| *score < 3.0)
+        .map(|_| {
+            vec![
+                "Lower self-confidence, surface verification steps, and emphasize collaborative review because reputation is low."
+                    .to_owned(),
+            ]
+        })
+        .unwrap_or_default()
+}
+
+fn low_reputation_score(normalized: &NormalizedInputs) -> Option<f32> {
+    normalized
+        .upstream
+        .registry
+        .reputation
+        .as_ref()
+        .and_then(|reputation| reputation.score_recent_30d.or(reputation.score_total))
 }
 
 fn style_rules(style: &CommunicationStyle) -> Vec<String> {
@@ -135,5 +178,102 @@ fn conflict_text(style: ConflictStyle) -> &'static str {
         ConflictStyle::DeEscalating => "de-escalate where possible",
         ConflictStyle::FirmRespectful => "stay firm and respectful",
         ConflictStyle::OperatorEscalation => "escalate conflict to the operator",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+
+    use crate::domain::{
+        BehaviorInputs, ComposeMode, ComposeRequest, RegistryStatus, ReputationSummary, SoulConfig,
+        VerificationResult,
+    };
+    use crate::sources::normalize::normalize_inputs;
+
+    use super::CommunicationRulesService;
+
+    #[test]
+    fn derive_adds_probationary_rule_for_pending_registry_status() {
+        let normalized = normalized_inputs(
+            Some(VerificationResult {
+                status: RegistryStatus::Pending,
+                standing_level: Some("probationary".to_owned()),
+                reason_code: None,
+                verified_at: Some(Utc::now()),
+            }),
+            None,
+        );
+
+        let rules = CommunicationRulesService.derive(&normalized, ComposeMode::Normal);
+
+        assert!(rules.iter().any(|rule| rule.contains("pending")));
+        assert!(rules.iter().any(|rule| rule.contains("probationary")));
+    }
+
+    #[test]
+    fn derive_adds_readonly_rule_for_retired_registry_status() {
+        let normalized = normalized_inputs(
+            Some(VerificationResult {
+                status: RegistryStatus::Retired,
+                standing_level: Some("historical".to_owned()),
+                reason_code: None,
+                verified_at: Some(Utc::now()),
+            }),
+            None,
+        );
+
+        let rules = CommunicationRulesService.derive(&normalized, ComposeMode::Normal);
+
+        assert!(rules.iter().any(|rule| rule.contains("historical")));
+        assert!(rules.iter().any(|rule| rule.contains("read-only")));
+    }
+
+    #[test]
+    fn derive_adds_low_reputation_caution_rule() {
+        let normalized = normalized_inputs(
+            Some(VerificationResult {
+                status: RegistryStatus::Active,
+                standing_level: Some("watch".to_owned()),
+                reason_code: None,
+                verified_at: Some(Utc::now()),
+            }),
+            Some(ReputationSummary {
+                score_total: Some(3.8),
+                score_recent_30d: Some(2.4),
+                last_event_at: None,
+                context: vec!["recent incident".to_owned()],
+            }),
+        );
+
+        let rules = CommunicationRulesService.derive(&normalized, ComposeMode::Normal);
+
+        assert!(rules.iter().any(
+            |rule| rule.contains("reputation is low") && rule.contains("collaborative review")
+        ));
+    }
+
+    fn normalized_inputs(
+        verification_result: Option<VerificationResult>,
+        reputation_summary: Option<ReputationSummary>,
+    ) -> crate::domain::NormalizedInputs {
+        let request = ComposeRequest::new("alpha", "session-1");
+        let config = SoulConfig {
+            agent_id: "alpha".into(),
+            profile_name: "Alpha".into(),
+            ..SoulConfig::default()
+        };
+
+        normalize_inputs(
+            &request,
+            BehaviorInputs {
+                soul_config: config,
+                verification_result,
+                reputation_summary,
+                generated_at: Utc::now(),
+                ..BehaviorInputs::default()
+            },
+        )
+        .expect("normalized inputs")
     }
 }
