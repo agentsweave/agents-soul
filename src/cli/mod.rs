@@ -7,7 +7,7 @@ pub mod reset;
 
 use std::{ffi::OsString, io};
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use serde::Serialize;
 
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
 };
 
 #[derive(Debug, Parser)]
-#[command(name = "agents-soul")]
+#[command(name = "agents-soul", version)]
 struct Cli {
     #[command(subcommand)]
     command: CliCommand,
@@ -85,7 +85,17 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let cli = Cli::try_parse_from(args).map_err(|err| SoulError::Validation(err.to_string()))?;
+    let cli = match Cli::try_parse_from(args) {
+        Ok(cli) => cli,
+        Err(err) => match err.kind() {
+            ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
+                err.print()
+                    .map_err(|error| SoulError::Internal(error.to_string()))?;
+                return Ok(());
+            }
+            _ => return Err(SoulError::Validation(err.to_string())),
+        },
+    };
     execute(cli, config, deps)
 }
 
@@ -500,6 +510,36 @@ mod tests {
             return Err(format!("unexpected validation message: {message}").into());
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn root_help_returns_success_instead_of_validation_error() -> Result<(), Box<dyn Error>> {
+        run_with_args(
+            vec!["agents-soul", "--help"],
+            &ApplicationConfig::new("/tmp/unused"),
+            &AppDeps::default(),
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn subcommand_help_returns_success_instead_of_validation_error() -> Result<(), Box<dyn Error>> {
+        run_with_args(
+            vec!["agents-soul", "compose", "--help"],
+            &ApplicationConfig::new("/tmp/unused"),
+            &AppDeps::default(),
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn root_version_returns_success_instead_of_validation_error() -> Result<(), Box<dyn Error>> {
+        run_with_args(
+            vec!["agents-soul", "--version"],
+            &ApplicationConfig::new("/tmp/unused"),
+            &AppDeps::default(),
+        )?;
         Ok(())
     }
 
