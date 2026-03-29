@@ -133,13 +133,16 @@ pub fn normalize_inputs(
         )
     };
 
+    let identity_recovery_state = identity_snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.recovery_state)
+        .or(inputs.identity_recovery_state);
+
     let compose_mode_hint = compose_mode_hint(
         verification_result
             .as_ref()
             .map(|verification| verification.status),
-        identity_snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.recovery_state),
+        identity_recovery_state,
         inputs.soul_config.limits.offline_registry_behavior,
     );
 
@@ -150,6 +153,7 @@ pub fn normalize_inputs(
         profile_name: inputs.soul_config.profile_name.clone(),
         compose_mode_hint: Some(compose_mode_hint),
         identity_snapshot,
+        identity_recovery_state,
         identity_provenance,
         verification_result,
         verification_provenance,
@@ -208,10 +212,18 @@ fn compose_mode_hint(
             Some(RecoveryState::Healthy) => ComposeMode::Normal,
             None => ComposeMode::BaselineOnly,
         },
-        None => match offline_behavior {
-            crate::domain::OfflineRegistryBehavior::Cautious => ComposeMode::Degraded,
-            crate::domain::OfflineRegistryBehavior::BaselineOnly => ComposeMode::BaselineOnly,
-            crate::domain::OfflineRegistryBehavior::FailClosed => ComposeMode::FailClosed,
-        },
+        None => {
+            if recovery_state.is_none() {
+                ComposeMode::BaselineOnly
+            } else {
+                match offline_behavior {
+                    crate::domain::OfflineRegistryBehavior::Cautious => ComposeMode::Degraded,
+                    crate::domain::OfflineRegistryBehavior::BaselineOnly => {
+                        ComposeMode::BaselineOnly
+                    }
+                    crate::domain::OfflineRegistryBehavior::FailClosed => ComposeMode::FailClosed,
+                }
+            }
+        }
     }
 }

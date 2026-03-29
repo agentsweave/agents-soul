@@ -32,10 +32,17 @@ impl ComposeService {
         let effective_overrides =
             deps.load_effective_overrides(&request.workspace_id, &config, &request.agent_id)?;
 
-        let identity_selection = deps.load_identity_snapshot(&request, &config)?;
+        let identity_selection = deps.load_identify_signals(&request, &config)?;
         let verification_selection = deps.load_registry_verification(&request)?;
         let reputation_selection = deps.load_registry_reputation(&request)?;
-        let identity_snapshot = identity_selection.value.clone();
+        let identity_snapshot = identity_selection
+            .value
+            .as_ref()
+            .and_then(|signals| signals.snapshot.clone());
+        let identity_recovery_state = identity_selection
+            .value
+            .as_ref()
+            .and_then(|signals| signals.recovery_state);
         let verification_result = verification_selection.value.clone();
         let reputation_summary = reputation_selection.value.clone();
 
@@ -62,6 +69,7 @@ impl ComposeService {
             &request,
             BehaviorInputs {
                 schema_version: CURRENT_SCHEMA_VERSION,
+                identity_recovery_state,
                 identity_snapshot,
                 identity_provenance: identity_selection.provenance,
                 verification_result,

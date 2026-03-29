@@ -1,6 +1,7 @@
 use crate::domain::{
     BehaviorWarning, ComposeMode, NormalizedInputs, RecoveryState, RegistryStatus, WarningSeverity,
 };
+use crate::sources::identity::missing_snapshot_warning;
 
 #[derive(Debug, Clone, Default)]
 pub struct WarningService;
@@ -21,7 +22,13 @@ impl WarningService {
                 .unwrap_or_default(),
         );
 
-        if normalized.identity_snapshot.is_none() {
+        if normalized.identity_snapshot.is_none()
+            && let Some(recovery_state) = normalized.identity_recovery_state
+        {
+            warnings.push(missing_snapshot_warning(recovery_state));
+        }
+
+        if normalized.identity_snapshot.is_none() && normalized.identity_recovery_state.is_none() {
             warnings.push(warning(
                 WarningSeverity::Caution,
                 "identity_unavailable",
@@ -45,11 +52,7 @@ impl WarningService {
             ));
         }
 
-        if let Some(recovery_state) = normalized
-            .identity_snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.recovery_state)
-        {
+        if let Some(recovery_state) = normalized.identity_recovery_state {
             match recovery_state {
                 RecoveryState::Healthy => {}
                 RecoveryState::Recovering => warnings.push(warning(

@@ -118,9 +118,12 @@ fn identity_reader_prefers_explicit_path_over_live_and_cache() -> Result<(), Box
     write_json(
         workspace.join("explicit_identity.json"),
         r#"{
-            "agent_id":"alpha",
-            "recovery_state":"healthy",
-            "active_commitments":["explicit"]
+            "snapshot": {
+                "agent_id":"alpha",
+                "recovery_state":"healthy",
+                "active_commitments":["explicit"]
+            },
+            "recovery_state":"healthy"
         }"#,
     )?;
     write_json(
@@ -152,10 +155,13 @@ fn identity_reader_prefers_explicit_path_over_live_and_cache() -> Result<(), Box
         ..SoulConfig::default()
     };
 
-    let selection = IdentityReader.load(&request, &config)?;
-    let snapshot = selection.value.expect("identity snapshot");
+    let selection = IdentityReader::default().load(&request, &config)?;
+    let provenance = selection.provenance.clone();
+    let signals = selection.value.expect("identity signals");
+    let snapshot = signals.snapshot.expect("identity snapshot");
     assert_eq!(snapshot.active_commitments, vec!["explicit".to_owned()]);
-    assert_eq!(selection.provenance.source, InputSourceKind::Explicit);
+    assert_eq!(provenance.source, InputSourceKind::Explicit);
+    assert_eq!(signals.recovery_state, Some(RecoveryState::Healthy));
 
     cleanup_workspace(&workspace)?;
     Ok(())
@@ -188,8 +194,8 @@ fn registry_reader_uses_cache_when_live_files_are_missing() -> Result<(), Box<dy
         },
     )?;
 
-    let verification = RegistryReader.load_verification(&request)?;
-    let reputation = RegistryReader.load_reputation(&request)?;
+    let verification = RegistryReader::default().load_verification(&request)?;
+    let reputation = RegistryReader::default().load_reputation(&request)?;
 
     assert_eq!(verification.provenance.source, InputSourceKind::Cache);
     assert_eq!(reputation.provenance.source, InputSourceKind::Cache);
@@ -205,6 +211,93 @@ fn registry_reader_uses_cache_when_live_files_are_missing() -> Result<(), Box<dy
         reputation.value.expect("reputation").context,
         vec!["cache-hit".to_owned()]
     );
+
+    cleanup_workspace(&workspace)?;
+    Ok(())
+}
+
+#[test]
+fn registry_reader_supports_combined_registry_snapshot_file() -> Result<(), Box<dyn Error>> {
+    let workspace = test_workspace("registry-snapshot");
+    fs::create_dir_all(workspace.join(".soul"))?;
+    write_json(
+        workspace.join("agents_registry.json"),
+        r#"{
+            "standing": {
+                "status": "suspended",
+                "standing_level": "watch",
+                "reason_code": "manual-review"
+            },
+            "reputation": {
+                "score_total": 2.4,
+                "score_recent_30d": 1.5,
+                "context": ["recent incident", "manual review"]
+            }
+        }"#,
+    )?;
+
+    let mut request = ComposeRequest::new("alpha", "session-1");
+    request.workspace_id = workspace.display().to_string();
+
+    let reader = RegistryReader::default();
+    let verification = reader.load_verification(&request)?;
+    let reputation = reader.load_reputation(&request)?;
+    let snapshot = reader.load_snapshot(&request)?;
+
+    assert_eq!(verification.provenance.source, InputSourceKind::Live);
+    assert_eq!(reputation.provenance.source, InputSourceKind::Live);
+    assert_eq!(
+        verification.value.expect("standing").status,
+        RegistryStatus::Suspended
+    );
+    assert_eq!(reputation.value.expect("reputation").score_total, Some(2.4));
+
+    let snapshot = snapshot.value.expect("snapshot");
+    assert_eq!(
+        snapshot.standing.expect("standing").reason_code.as_deref(),
+        Some("manual-review")
+    );
+    assert_eq!(
+        snapshot.reputation.expect("reputation").context,
+        vec!["recent incident".to_owned(), "manual review".to_owned()]
+    );
+
+    cleanup_workspace(&workspace)?;
+    Ok(())
+}
+
+#[test]
+fn identity_reader_supports_health_only_identify_fixture() -> Result<(), Box<dyn Error>> {
+    let workspace = test_workspace("identify-health-only");
+    let identity_workspace = workspace.join("identity");
+    fs::create_dir_all(identity_workspace.join(".soul"))?;
+
+    write_json(
+        identity_workspace.join("agents_identify.json"),
+        r#"{
+            "recovery_state":"degraded"
+        }"#,
+    )?;
+
+    let mut request = ComposeRequest::new("alpha", "session-1");
+    request.workspace_id = workspace.display().to_string();
+    let config = SoulConfig {
+        agent_id: "alpha".into(),
+        profile_name: "Alpha".into(),
+        sources: SourceConfig {
+            identity_workspace: identity_workspace.display().to_string(),
+            ..SoulConfig::default().sources
+        },
+        ..SoulConfig::default()
+    };
+
+    let selection = IdentityReader::default().load(&request, &config)?;
+    let provenance = selection.provenance.clone();
+    let signals = selection.value.expect("identify signals");
+
+    assert_eq!(provenance.source, InputSourceKind::Live);
+    assert_eq!(signals.recovery_state, Some(RecoveryState::Degraded));
+    assert!(signals.snapshot.is_none());
 
     cleanup_workspace(&workspace)?;
     Ok(())
@@ -252,6 +345,61 @@ fn normalize_inputs_records_identity_agent_mismatch_as_warning() {
             .iter()
             .any(|warning| warning.code == "identity_agent_mismatch")
     );
+}
+
+#[test]
+fn normalize_inputs_caps_offline_fail_closed_to_baseline_only_without_identity() {
+    let request = ComposeRequest::new("alpha", "session-1");
+    let mut config = SoulConfig {
+        agent_id: "alpha".into(),
+        profile_name: "Alpha Builder".into(),
+        ..SoulConfig::default()
+    };
+    config.limits.offline_registry_behavior =
+        agents_soul::domain::OfflineRegistryBehavior::FailClosed;
+
+    let normalized = normalize_inputs(
+        &request,
+        BehaviorInputs {
+            soul_config: config,
+            generated_at: Utc::now(),
+            ..BehaviorInputs::default()
+        },
+    )
+    .expect("bundle should normalize");
+
+    assert_eq!(
+        normalized.compose_mode_hint,
+        Some(ComposeMode::BaselineOnly)
+    );
+}
+
+#[test]
+fn normalize_inputs_preserves_identify_health_without_snapshot() {
+    let request = ComposeRequest::new("alpha", "session-1");
+    let config = SoulConfig {
+        agent_id: "alpha".into(),
+        profile_name: "Alpha Builder".into(),
+        ..SoulConfig::default()
+    };
+
+    let normalized = normalize_inputs(
+        &request,
+        BehaviorInputs {
+            soul_config: config,
+            identity_recovery_state: Some(RecoveryState::Recovering),
+            generated_at: Utc::now(),
+            ..BehaviorInputs::default()
+        },
+    )
+    .expect("bundle should normalize");
+
+    assert!(normalized.identity_snapshot.is_none());
+    assert_eq!(
+        normalized.identity_recovery_state,
+        Some(RecoveryState::Recovering)
+    );
+    assert_eq!(normalized.compose_mode_hint, Some(ComposeMode::Degraded));
 }
 
 #[test]

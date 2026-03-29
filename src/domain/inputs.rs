@@ -130,8 +130,17 @@ pub struct SessionIdentitySnapshot {
     pub fingerprint: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct IdentifySignals {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<SessionIdentitySnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_state: Option<RecoveryState>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct VerificationResult {
+pub struct RegistryStanding {
     pub status: RegistryStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub standing_level: Option<String>,
@@ -141,8 +150,10 @@ pub struct VerificationResult {
     pub verified_at: Option<DateTime<Utc>>,
 }
 
+pub type VerificationResult = RegistryStanding;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-pub struct ReputationSummary {
+pub struct RegistryReputation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score_total: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -153,11 +164,23 @@ pub struct ReputationSummary {
     pub context: Vec<String>,
 }
 
+pub type ReputationSummary = RegistryReputation;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct RegistrySnapshot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standing: Option<RegistryStanding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reputation: Option<RegistryReputation>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BehaviorInputs {
     pub schema_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_snapshot: Option<SessionIdentitySnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_recovery_state: Option<RecoveryState>,
     #[serde(default)]
     pub identity_provenance: InputProvenance,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -185,6 +208,8 @@ pub struct NormalizedInputs {
     pub compose_mode_hint: Option<ComposeMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_snapshot: Option<SessionIdentitySnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_recovery_state: Option<RecoveryState>,
     #[serde(default)]
     pub identity_provenance: InputProvenance,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -207,6 +232,7 @@ impl Default for BehaviorInputs {
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
             identity_snapshot: None,
+            identity_recovery_state: None,
             identity_provenance: InputProvenance::unavailable("identity not requested"),
             verification_result: None,
             verification_provenance: InputProvenance::unavailable(

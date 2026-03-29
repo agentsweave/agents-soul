@@ -27,8 +27,9 @@ pub use config_patch::{
 pub use errors::{SoulError, SoulErrorCategory};
 pub use heuristics::DecisionHeuristic;
 pub use inputs::{
-    BehaviorInputs, ComposeRequest, InputProvenance, InputSourceKind, NormalizedInputs,
-    RelationshipMarker, ReputationSummary, SessionIdentitySnapshot, VerificationResult,
+    BehaviorInputs, ComposeRequest, IdentifySignals, InputProvenance, InputSourceKind,
+    NormalizedInputs, RegistryReputation, RegistrySnapshot, RegistryStanding, RelationshipMarker,
+    ReputationSummary, SessionIdentitySnapshot, VerificationResult,
 };
 pub use interactions::InteractionEvent;
 pub use limits::{OfflineRegistryBehavior, RevokedBehavior, SoulLimits};

@@ -7,8 +7,8 @@ use crate::{
     app::config::load_soul_config,
     app::errors::{SoulTransportError, map_soul_error},
     domain::{
-        BehavioralContext, ComposeMode, ComposeRequest, ReputationSummary, SessionIdentitySnapshot,
-        SoulConfig, SoulConfigPatch, SoulError, VerificationResult,
+        BehavioralContext, ComposeMode, ComposeRequest, IdentifySignals, ReputationSummary,
+        SessionIdentitySnapshot, SoulConfig, SoulConfigPatch, SoulError, VerificationResult,
     },
     services::{
         SoulServices,
@@ -174,12 +174,25 @@ impl AppDeps {
             .load_effective_overrides(workspace_root, config, agent_id)
     }
 
+    pub fn load_identify_signals(
+        &self,
+        request: &ComposeRequest,
+        config: &SoulConfig,
+    ) -> Result<ReaderSelection<IdentifySignals>, SoulError> {
+        self.sources.identity.load(request, config)
+    }
+
     pub fn load_identity_snapshot(
         &self,
         request: &ComposeRequest,
         config: &SoulConfig,
     ) -> Result<ReaderSelection<SessionIdentitySnapshot>, SoulError> {
-        self.sources.identity.load(request, config)
+        let selection = self.load_identify_signals(request, config)?;
+        Ok(ReaderSelection {
+            value: selection.value.and_then(|signals| signals.snapshot),
+            provenance: selection.provenance,
+            warnings: selection.warnings,
+        })
     }
 
     pub fn load_registry_verification(

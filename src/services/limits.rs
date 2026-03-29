@@ -27,10 +27,7 @@ impl ComposeModeService {
                 .as_ref()
                 .map(|verification| verification.status),
             reputation_loaded: normalized.reputation_summary.is_some(),
-            recovery_state: normalized
-                .identity_snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.recovery_state),
+            recovery_state: normalized.identity_recovery_state,
         }
     }
 
@@ -82,22 +79,24 @@ fn derive_mode(normalized: &NormalizedInputs) -> ComposeMode {
     {
         Some(RegistryStatus::Revoked) => ComposeMode::FailClosed,
         Some(RegistryStatus::Suspended) => ComposeMode::Restricted,
-        Some(_) => match normalized
-            .identity_snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.recovery_state)
-        {
+        Some(_) => match normalized.identity_recovery_state {
             Some(RecoveryState::Broken)
             | Some(RecoveryState::Degraded)
             | Some(RecoveryState::Recovering) => ComposeMode::Degraded,
             Some(RecoveryState::Healthy) => ComposeMode::Normal,
             None => ComposeMode::BaselineOnly,
         },
-        None => match normalized.soul_config.limits.offline_registry_behavior {
-            OfflineRegistryBehavior::Cautious => ComposeMode::Degraded,
-            OfflineRegistryBehavior::BaselineOnly => ComposeMode::BaselineOnly,
-            OfflineRegistryBehavior::FailClosed => ComposeMode::FailClosed,
-        },
+        None => {
+            if normalized.identity_recovery_state.is_none() {
+                ComposeMode::BaselineOnly
+            } else {
+                match normalized.soul_config.limits.offline_registry_behavior {
+                    OfflineRegistryBehavior::Cautious => ComposeMode::Degraded,
+                    OfflineRegistryBehavior::BaselineOnly => ComposeMode::BaselineOnly,
+                    OfflineRegistryBehavior::FailClosed => ComposeMode::FailClosed,
+                }
+            }
+        }
     }
 }
 
@@ -144,6 +143,30 @@ mod tests {
 
         let service = ComposeModeService;
         assert_eq!(service.resolve(&normalized), ComposeMode::FailClosed);
+    }
+
+    #[test]
+    fn resolve_caps_offline_fail_closed_to_baseline_only_without_identity() {
+        let request = ComposeRequest::new("alpha", "session-1");
+        let mut config = SoulConfig {
+            agent_id: "alpha".into(),
+            profile_name: "Alpha".into(),
+            ..SoulConfig::default()
+        };
+        config.limits.offline_registry_behavior = OfflineRegistryBehavior::FailClosed;
+
+        let normalized = normalize_inputs(
+            &request,
+            BehaviorInputs {
+                soul_config: config,
+                generated_at: Utc::now(),
+                ..BehaviorInputs::default()
+            },
+        )
+        .expect("normalized inputs");
+
+        let service = ComposeModeService;
+        assert_eq!(service.resolve(&normalized), ComposeMode::BaselineOnly);
     }
 
     #[test]
