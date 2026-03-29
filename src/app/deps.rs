@@ -150,6 +150,18 @@ impl AppDeps {
         self.services.compose.compose(self, request)
     }
 
+    pub fn inspect_report(
+        &self,
+        request: ComposeRequest,
+    ) -> Result<crate::services::explain::InspectReport, SoulError> {
+        let artifacts = self.services.compose.compose_artifacts(self, request)?;
+        Ok(crate::services::ExplainService.build_inspect_report(
+            &artifacts.normalized,
+            &artifacts.effective_overrides,
+            &artifacts.context,
+        ))
+    }
+
     pub fn update_soul_config(
         &self,
         workspace_root: impl Into<std::path::PathBuf>,

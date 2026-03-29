@@ -1,8 +1,16 @@
+use std::cmp::Reverse;
+
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{
-    BehavioralContext, CommunicationOverride, ComposeMode, HeuristicOverride, InputSourceKind,
-    NormalizedInputs, PersonalityOverride, RegistryStatus, WarningSeverity,
+use crate::{
+    adaptation::EffectiveOverrideSet,
+    domain::heuristics::HeuristicSource,
+    domain::{
+        BehaviorWarning, BehavioralContext, CommunicationOverride, ComposeMode, HeuristicOverride,
+        InputSourceKind, NormalizedInputs, PersonalityOverride, ProvenanceReport, RegistryStatus,
+        StatusSummary, WarningSeverity,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +37,138 @@ pub struct ExplainContributor {
 pub struct ExplainFieldContributors {
     pub field: String,
     pub contributors: Vec<ExplainContributor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InspectReport {
+    pub schema_version: u32,
+    pub agent_id: String,
+    pub profile_name: String,
+    pub status_summary: StatusSummary,
+    pub traits: InspectTraitProjection,
+    pub heuristics: InspectHeuristicProjection,
+    pub adaptation: InspectAdaptationProjection,
+    pub warnings: InspectWarningProjection,
+    pub provenance: InspectProvenanceProjection,
+    pub explain_fields: Vec<ExplainFieldContributors>,
+}
+
+impl InspectReport {
+    pub fn traits_only(&self) -> InspectTraitProjection {
+        self.traits.clone()
+    }
+
+    pub fn heuristics_only(&self) -> InspectHeuristicProjection {
+        self.heuristics.clone()
+    }
+
+    pub fn adaptation_only(&self) -> InspectAdaptationProjection {
+        self.adaptation.clone()
+    }
+
+    pub fn warnings_only(&self) -> InspectWarningProjection {
+        self.warnings.clone()
+    }
+
+    pub fn provenance_only(&self) -> InspectProvenanceProjection {
+        self.provenance.clone()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InspectTraitProjection {
+    pub entries: Vec<InspectTraitEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InspectTraitEntry {
+    pub trait_name: String,
+    pub baseline: f32,
+    pub adapted: f32,
+    pub effective: f32,
+    pub adaptation_delta: f32,
+    pub adaptation_applied: bool,
+    pub mode_adjusted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InspectHeuristicProjection {
+    pub entries: Vec<InspectHeuristicEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InspectHeuristicEntry {
+    pub heuristic_id: String,
+    pub title: String,
+    pub trigger: String,
+    pub source: HeuristicSource,
+    pub baseline_priority: i32,
+    pub effective_priority: i32,
+    pub baseline_enabled: bool,
+    pub effective_enabled: bool,
+    pub baseline_instruction: String,
+    pub effective_instruction: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptation_note: Option<String>,
+    pub modified_by_adaptation: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InspectAdaptationProjection {
+    pub enabled: bool,
+    pub active: bool,
+    pub evidence_window_size: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_updated_at: Option<DateTime<Utc>>,
+    pub notes: Vec<String>,
+    pub trait_overrides: Vec<InspectTraitOverride>,
+    pub communication_overrides: Vec<InspectCommunicationOverride>,
+    pub heuristic_overrides: Vec<InspectHeuristicOverrideEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InspectTraitOverride {
+    pub trait_name: String,
+    pub delta: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InspectCommunicationOverride {
+    pub field: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InspectHeuristicOverrideEntry {
+    pub heuristic_id: String,
+    pub priority_delta: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replacement_instruction: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InspectWarningProjection {
+    pub total: usize,
+    pub severe: usize,
+    pub important: usize,
+    pub caution: usize,
+    pub info: usize,
+    pub entries: Vec<BehaviorWarning>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InspectProvenanceProjection {
+    pub report: ProvenanceReport,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reputation_detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -89,6 +229,297 @@ impl ExplainService {
             },
         ]
     }
+
+    pub fn build_inspect_report(
+        &self,
+        normalized: &NormalizedInputs,
+        effective_overrides: &EffectiveOverrideSet,
+        context: &BehavioralContext,
+    ) -> InspectReport {
+        InspectReport {
+            schema_version: context.schema_version,
+            agent_id: context.agent_id.clone(),
+            profile_name: context.profile_name.clone(),
+            status_summary: context.status_summary.clone(),
+            traits: inspect_traits(normalized, effective_overrides, context),
+            heuristics: inspect_heuristics(normalized, effective_overrides),
+            adaptation: inspect_adaptation(normalized),
+            warnings: inspect_warnings(context),
+            provenance: inspect_provenance(normalized, context),
+            explain_fields: self.extract(normalized, context),
+        }
+    }
+}
+
+fn inspect_traits(
+    normalized: &NormalizedInputs,
+    effective_overrides: &EffectiveOverrideSet,
+    context: &BehavioralContext,
+) -> InspectTraitProjection {
+    let baseline = &normalized.soul_config.trait_baseline;
+    let adapted = &effective_overrides.trait_profile;
+    let effective = &context.trait_profile;
+
+    InspectTraitProjection {
+        entries: vec![
+            inspect_trait_entry(
+                "openness",
+                baseline.openness,
+                adapted.openness,
+                effective.openness,
+            ),
+            inspect_trait_entry(
+                "conscientiousness",
+                baseline.conscientiousness,
+                adapted.conscientiousness,
+                effective.conscientiousness,
+            ),
+            inspect_trait_entry(
+                "initiative",
+                baseline.initiative,
+                adapted.initiative,
+                effective.initiative,
+            ),
+            inspect_trait_entry(
+                "directness",
+                baseline.directness,
+                adapted.directness,
+                effective.directness,
+            ),
+            inspect_trait_entry("warmth", baseline.warmth, adapted.warmth, effective.warmth),
+            inspect_trait_entry(
+                "risk_tolerance",
+                baseline.risk_tolerance,
+                adapted.risk_tolerance,
+                effective.risk_tolerance,
+            ),
+            inspect_trait_entry(
+                "verbosity",
+                baseline.verbosity,
+                adapted.verbosity,
+                effective.verbosity,
+            ),
+            inspect_trait_entry(
+                "formality",
+                baseline.formality,
+                adapted.formality,
+                effective.formality,
+            ),
+        ],
+    }
+}
+
+fn inspect_trait_entry(
+    trait_name: &str,
+    baseline: f32,
+    adapted: f32,
+    effective: f32,
+) -> InspectTraitEntry {
+    let adaptation_delta = adapted - baseline;
+    InspectTraitEntry {
+        trait_name: trait_name.to_owned(),
+        baseline,
+        adapted,
+        effective,
+        adaptation_delta,
+        adaptation_applied: adaptation_delta.abs() > f32::EPSILON,
+        mode_adjusted: (effective - adapted).abs() > f32::EPSILON,
+    }
+}
+
+fn inspect_heuristics(
+    normalized: &NormalizedInputs,
+    effective_overrides: &EffectiveOverrideSet,
+) -> InspectHeuristicProjection {
+    let override_notes = normalized
+        .adaptation_state
+        .heuristic_overrides
+        .iter()
+        .map(|override_rule| (override_rule.heuristic_id.as_str(), override_rule))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let effective_map = effective_overrides
+        .decision_heuristics
+        .iter()
+        .map(|heuristic| (heuristic.heuristic_id.as_str(), heuristic))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    let mut entries = normalized
+        .soul_config
+        .decision_heuristics
+        .iter()
+        .map(|baseline| {
+            let effective = effective_map
+                .get(baseline.heuristic_id.as_str())
+                .copied()
+                .unwrap_or(baseline);
+            let override_rule = override_notes.get(baseline.heuristic_id.as_str()).copied();
+
+            InspectHeuristicEntry {
+                heuristic_id: baseline.heuristic_id.clone(),
+                title: baseline.title.clone(),
+                trigger: baseline.trigger.clone(),
+                source: effective.source.clone(),
+                baseline_priority: baseline.priority,
+                effective_priority: effective.priority,
+                baseline_enabled: baseline.enabled,
+                effective_enabled: effective.enabled,
+                baseline_instruction: baseline.instruction.clone(),
+                effective_instruction: effective.instruction.clone(),
+                adaptation_note: override_rule.and_then(|rule| rule.note.clone()),
+                modified_by_adaptation: baseline.priority != effective.priority
+                    || baseline.enabled != effective.enabled
+                    || baseline.instruction != effective.instruction
+                    || override_rule.and_then(|rule| rule.note.as_ref()).is_some(),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    entries.sort_by_key(|entry| {
+        (
+            Reverse(entry.effective_priority),
+            entry.heuristic_id.clone(),
+        )
+    });
+
+    InspectHeuristicProjection { entries }
+}
+
+fn inspect_adaptation(normalized: &NormalizedInputs) -> InspectAdaptationProjection {
+    let adaptation = &normalized.adaptation_state;
+    let trait_overrides = inspect_trait_overrides(&adaptation.trait_overrides);
+    let communication_overrides =
+        inspect_communication_overrides(&adaptation.communication_overrides);
+    let heuristic_overrides = adaptation
+        .heuristic_overrides
+        .iter()
+        .map(|override_rule| InspectHeuristicOverrideEntry {
+            heuristic_id: override_rule.heuristic_id.clone(),
+            priority_delta: override_rule.priority_delta,
+            enabled: override_rule.enabled,
+            replacement_instruction: override_rule.replacement_instruction.clone(),
+            note: override_rule.note.clone(),
+        })
+        .collect::<Vec<_>>();
+    let active = !trait_overrides.is_empty()
+        || !communication_overrides.is_empty()
+        || !heuristic_overrides.is_empty()
+        || !adaptation.notes.is_empty();
+
+    InspectAdaptationProjection {
+        enabled: normalized.soul_config.adaptation.enabled,
+        active,
+        evidence_window_size: adaptation.evidence_window_size,
+        last_updated_at: adaptation.last_updated_at,
+        notes: adaptation.notes.clone(),
+        trait_overrides,
+        communication_overrides,
+        heuristic_overrides,
+    }
+}
+
+fn inspect_trait_overrides(overrides: &PersonalityOverride) -> Vec<InspectTraitOverride> {
+    [
+        ("openness", overrides.openness),
+        ("conscientiousness", overrides.conscientiousness),
+        ("initiative", overrides.initiative),
+        ("directness", overrides.directness),
+        ("warmth", overrides.warmth),
+        ("risk_tolerance", overrides.risk_tolerance),
+        ("verbosity", overrides.verbosity),
+        ("formality", overrides.formality),
+    ]
+    .into_iter()
+    .filter(|(_, delta)| delta.abs() > f32::EPSILON)
+    .map(|(trait_name, delta)| InspectTraitOverride {
+        trait_name: trait_name.to_owned(),
+        delta,
+    })
+    .collect()
+}
+
+fn inspect_communication_overrides(
+    overrides: &CommunicationOverride,
+) -> Vec<InspectCommunicationOverride> {
+    let mut entries = Vec::new();
+
+    if let Some(value) = overrides.default_register {
+        entries.push(InspectCommunicationOverride {
+            field: "default_register".to_owned(),
+            value: format!("{value:?}"),
+        });
+    }
+    if let Some(value) = overrides.paragraph_budget {
+        entries.push(InspectCommunicationOverride {
+            field: "paragraph_budget".to_owned(),
+            value: format!("{value:?}"),
+        });
+    }
+    if let Some(value) = overrides.question_style {
+        entries.push(InspectCommunicationOverride {
+            field: "question_style".to_owned(),
+            value: format!("{value:?}"),
+        });
+    }
+    if let Some(value) = overrides.uncertainty_style {
+        entries.push(InspectCommunicationOverride {
+            field: "uncertainty_style".to_owned(),
+            value: format!("{value:?}"),
+        });
+    }
+    if let Some(value) = overrides.feedback_style {
+        entries.push(InspectCommunicationOverride {
+            field: "feedback_style".to_owned(),
+            value: format!("{value:?}"),
+        });
+    }
+    if let Some(value) = overrides.conflict_style {
+        entries.push(InspectCommunicationOverride {
+            field: "conflict_style".to_owned(),
+            value: format!("{value:?}"),
+        });
+    }
+
+    entries
+}
+
+fn inspect_warnings(context: &BehavioralContext) -> InspectWarningProjection {
+    InspectWarningProjection {
+        total: context.warnings.len(),
+        severe: count_warnings(&context.warnings, WarningSeverity::Severe),
+        important: count_warnings(&context.warnings, WarningSeverity::Important),
+        caution: count_warnings(&context.warnings, WarningSeverity::Caution),
+        info: count_warnings(&context.warnings, WarningSeverity::Info),
+        entries: context.warnings.clone(),
+    }
+}
+
+fn inspect_provenance(
+    normalized: &NormalizedInputs,
+    context: &BehavioralContext,
+) -> InspectProvenanceProjection {
+    InspectProvenanceProjection {
+        report: context.provenance.clone(),
+        identity_detail: normalized.upstream.identity.provenance.detail.clone(),
+        verification_detail: normalized
+            .upstream
+            .registry
+            .verification_provenance
+            .detail
+            .clone(),
+        reputation_detail: normalized
+            .upstream
+            .registry
+            .reputation_provenance
+            .detail
+            .clone(),
+    }
+}
+
+fn count_warnings(warnings: &[BehaviorWarning], severity: WarningSeverity) -> usize {
+    warnings
+        .iter()
+        .filter(|warning| warning.severity == severity)
+        .count()
 }
 
 fn status_summary_contributors(
@@ -672,6 +1103,7 @@ mod tests {
     use chrono::Utc;
 
     use crate::{
+        adaptation::{EffectiveOverrideSet, materialize_effective_overrides},
         domain::{
             AdaptationState, BehaviorInputs, BehavioralContext, CommunicationOverride, ComposeMode,
             ComposeRequest, DecisionHeuristic, HeuristicOverride, InputProvenance, InputSourceKind,
@@ -857,6 +1289,160 @@ mod tests {
         let second = ExplainService.extract(&normalized, &context);
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn build_inspect_report_exposes_structured_trait_and_warning_slices() {
+        let request = ComposeRequest::new("alpha", "session-1");
+        let mut config = SoulConfig {
+            agent_id: "alpha".into(),
+            profile_name: "Alpha".into(),
+            ..SoulConfig::default()
+        };
+        config.limits.max_trait_drift = 0.10;
+        config.decision_heuristics = vec![DecisionHeuristic {
+            heuristic_id: "verify-first".into(),
+            title: "Verify first".into(),
+            priority: 1,
+            trigger: "default".into(),
+            instruction: "Verify before acting".into(),
+            enabled: true,
+            ..DecisionHeuristic::default()
+        }];
+
+        let normalized = normalize_inputs(
+            &request,
+            BehaviorInputs {
+                soul_config: config.clone(),
+                verification_result: Some(VerificationResult {
+                    status: RegistryStatus::Suspended,
+                    standing_level: Some("watch".into()),
+                    reason_code: None,
+                    verified_at: Some(Utc::now()),
+                }),
+                adaptation_state: AdaptationState {
+                    trait_overrides: PersonalityOverride {
+                        initiative: -0.30,
+                        ..PersonalityOverride::default()
+                    },
+                    notes: vec!["Slow down autonomy".into()],
+                    ..AdaptationState::default()
+                },
+                generated_at: Utc::now(),
+                ..BehaviorInputs::default()
+            },
+        )
+        .expect("normalized inputs");
+
+        let effective_overrides = materialize_effective_overrides(&config, None);
+        let context = build_context(&normalized, ComposeMode::Restricted);
+        let report =
+            ExplainService.build_inspect_report(&normalized, &effective_overrides, &context);
+
+        assert_eq!(report.status_summary.compose_mode, ComposeMode::Restricted);
+        assert!(
+            report
+                .traits
+                .entries
+                .iter()
+                .any(|entry| entry.trait_name == "initiative" && entry.mode_adjusted)
+        );
+        assert_eq!(report.warnings.total, context.warnings.len());
+        assert_eq!(report.traits_only(), report.traits);
+        assert_eq!(report.warnings_only(), report.warnings);
+        assert!(
+            report
+                .explain_fields
+                .iter()
+                .any(|field| field.field == "provenance")
+        );
+    }
+
+    #[test]
+    fn build_inspect_report_exposes_heuristic_and_adaptation_overrides() {
+        let request = ComposeRequest::new("alpha", "session-1");
+        let mut config = SoulConfig {
+            agent_id: "alpha".into(),
+            profile_name: "Alpha".into(),
+            ..SoulConfig::default()
+        };
+        config.adaptation.min_interactions_for_adapt = 1;
+        config.decision_heuristics = vec![DecisionHeuristic {
+            heuristic_id: "verify-first".into(),
+            title: "Verify first".into(),
+            priority: 1,
+            trigger: "default".into(),
+            instruction: "Verify before acting".into(),
+            enabled: true,
+            ..DecisionHeuristic::default()
+        }];
+
+        let normalized = normalize_inputs(
+            &request,
+            BehaviorInputs {
+                soul_config: config.clone(),
+                adaptation_state: AdaptationState {
+                    communication_overrides: CommunicationOverride {
+                        question_style: Some(crate::domain::QuestionStyle::ClarifyBeforeRisk),
+                        ..CommunicationOverride::default()
+                    },
+                    heuristic_overrides: vec![HeuristicOverride {
+                        heuristic_id: "verify-first".into(),
+                        priority_delta: 3,
+                        enabled: Some(false),
+                        replacement_instruction: Some("Escalate before acting".into()),
+                        note: Some("operator requested more caution".into()),
+                    }],
+                    notes: vec!["Recent operator corrections".into()],
+                    ..AdaptationState::default()
+                },
+                generated_at: Utc::now(),
+                ..BehaviorInputs::default()
+            },
+        )
+        .expect("normalized inputs");
+
+        let effective_overrides = EffectiveOverrideSet {
+            trait_profile: config.trait_baseline.clone(),
+            communication_style: config.communication_style.clone(),
+            decision_heuristics: vec![DecisionHeuristic {
+                heuristic_id: "verify-first".into(),
+                title: "Verify first".into(),
+                priority: 4,
+                trigger: "default".into(),
+                instruction: "Escalate before acting".into(),
+                enabled: false,
+                ..DecisionHeuristic::default()
+            }],
+            adaptation_state: normalized.adaptation_state.clone(),
+        };
+        let context = build_context(&normalized, ComposeMode::Normal);
+        let report =
+            ExplainService.build_inspect_report(&normalized, &effective_overrides, &context);
+
+        let heuristic = report
+            .heuristics
+            .entries
+            .iter()
+            .find(|entry| entry.heuristic_id == "verify-first")
+            .expect("heuristic projection");
+        assert!(heuristic.modified_by_adaptation);
+        assert_eq!(heuristic.effective_priority, 4);
+        assert_eq!(heuristic.effective_instruction, "Escalate before acting");
+        assert_eq!(
+            heuristic.adaptation_note.as_deref(),
+            Some("operator requested more caution")
+        );
+
+        assert!(report.adaptation.active);
+        assert_eq!(report.heuristics_only(), report.heuristics);
+        assert!(
+            report
+                .adaptation
+                .communication_overrides
+                .iter()
+                .any(|entry| entry.field == "question_style")
+        );
     }
 
     fn build_context(

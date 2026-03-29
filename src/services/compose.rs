@@ -1,4 +1,5 @@
 use crate::{
+    adaptation::EffectiveOverrideSet,
     app::{config::WorkspacePaths, deps::AppDeps},
     domain::{
         BehaviorInputs, BehaviorWarning, BehavioralContext, CURRENT_SCHEMA_VERSION, ComposeMode,
@@ -27,12 +28,49 @@ use super::ServiceError;
 #[derive(Debug, Clone, Default)]
 pub struct ComposeService;
 
+#[derive(Debug, Clone)]
+pub struct ComposeArtifacts {
+    pub normalized: NormalizedInputs,
+    pub effective_overrides: EffectiveOverrideSet,
+    pub context: BehavioralContext,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedComposeInputs {
+    normalized: NormalizedInputs,
+    effective_overrides: EffectiveOverrideSet,
+}
+
 impl ComposeService {
     pub fn compose(
         &self,
         deps: &AppDeps,
         request: ComposeRequest,
     ) -> Result<BehavioralContext, ServiceError> {
+        self.compose_artifacts(deps, request)
+            .map(|artifacts| artifacts.context)
+    }
+
+    pub fn compose_artifacts(
+        &self,
+        deps: &AppDeps,
+        request: ComposeRequest,
+    ) -> Result<ComposeArtifacts, ServiceError> {
+        let prepared = self.prepare_inputs(deps, &request)?;
+        let context = self.build_context(deps, prepared.normalized.clone())?;
+
+        Ok(ComposeArtifacts {
+            normalized: prepared.normalized,
+            effective_overrides: prepared.effective_overrides,
+            context,
+        })
+    }
+
+    fn prepare_inputs(
+        &self,
+        deps: &AppDeps,
+        request: &ComposeRequest,
+    ) -> Result<PreparedComposeInputs, ServiceError> {
         request.validate()?;
         let config = deps.load_soul_config(&request.workspace_id)?;
         let effective_overrides =
@@ -82,7 +120,7 @@ impl ComposeService {
             });
 
             if let Err(error) = write_cached_inputs(
-                &request,
+                request,
                 &CachedInputs {
                     cache_key: None,
                     freshness,
@@ -91,12 +129,12 @@ impl ComposeService {
                     reputation_summary: reputation_summary.clone(),
                 },
             ) {
-                reader_warnings.push(cache_write_warning(&request, error));
+                reader_warnings.push(cache_write_warning(request, error));
             }
         }
 
         let normalized = normalize_inputs(
-            &request,
+            request,
             BehaviorInputs {
                 schema_version: CURRENT_SCHEMA_VERSION,
                 identity_recovery_state,
@@ -107,13 +145,16 @@ impl ComposeService {
                 reputation_summary,
                 reputation_provenance: reputation_selection.provenance,
                 soul_config: config,
-                adaptation_state: effective_overrides.adaptation_state,
+                adaptation_state: effective_overrides.adaptation_state.clone(),
                 reader_warnings,
                 generated_at: deps.now(),
             },
         )?;
 
-        self.build_context(deps, normalized)
+        Ok(PreparedComposeInputs {
+            normalized,
+            effective_overrides,
+        })
     }
 
     fn build_context(
