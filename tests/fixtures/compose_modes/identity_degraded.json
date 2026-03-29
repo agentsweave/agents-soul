@@ -1,0 +1,15 @@
+{
+  "agent_id": "agent.alpha",
+  "display_name": "Alpha",
+  "recovery_state": "degraded",
+  "active_commitments": ["stabilize current work"],
+  "relationship_markers": [
+    {
+      "subject": "operator",
+      "marker": "trusted",
+      "note": "primary owner"
+    }
+  ],
+  "facts": ["must keep autonomy conservative"],
+  "warnings": []
+}

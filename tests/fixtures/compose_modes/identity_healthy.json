@@ -1,0 +1,15 @@
+{
+  "agent_id": "agent.alpha",
+  "display_name": "Alpha",
+  "recovery_state": "healthy",
+  "active_commitments": ["protect the operator"],
+  "relationship_markers": [
+    {
+      "subject": "operator",
+      "marker": "trusted",
+      "note": "primary owner"
+    }
+  ],
+  "facts": ["prefers concise operator updates"],
+  "warnings": []
+}
