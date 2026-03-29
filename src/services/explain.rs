@@ -8,8 +8,8 @@ use crate::{
     domain::heuristics::HeuristicSource,
     domain::{
         BehaviorWarning, BehavioralContext, CommunicationOverride, ComposeMode, HeuristicOverride,
-        InputSourceKind, NormalizedInputs, PersonalityOverride, ProvenanceReport, RegistryStatus,
-        StatusSummary, WarningSeverity,
+        InputSourceKind, NormalizedInputs, PersonalityOverride, ProvenanceReport, RecoveryState,
+        RegistryStatus, StatusSummary, WarningSeverity,
     },
     services::templates::{TemplateSection, TemplateService},
 };
@@ -182,6 +182,16 @@ pub struct ExplainReport {
     pub rendered: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FullContextReport {
+    pub schema_version: u32,
+    pub agent_id: String,
+    pub profile_name: String,
+    pub status_summary: StatusSummary,
+    pub context: BehavioralContext,
+    pub rendered: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ExplainService;
 
@@ -280,6 +290,27 @@ impl ExplainService {
             profile_name: context.profile_name.clone(),
             status_summary: context.status_summary.clone(),
             inspect,
+            rendered,
+        })
+    }
+
+    pub fn build_full_context_report(
+        &self,
+        normalized: &NormalizedInputs,
+        context: &BehavioralContext,
+    ) -> Result<FullContextReport, crate::domain::SoulError> {
+        let rendered = TemplateService::default().render_full_context(
+            &normalized.soul_config.templates.full_context_template,
+            &format!("Behavioral Context {}", context.profile_name),
+            &full_context_sections(context),
+        )?;
+
+        Ok(FullContextReport {
+            schema_version: context.schema_version,
+            agent_id: context.agent_id.clone(),
+            profile_name: context.profile_name.clone(),
+            status_summary: context.status_summary.clone(),
+            context: context.clone(),
             rendered,
         })
     }
@@ -579,6 +610,132 @@ fn explain_sections(report: &InspectReport) -> Vec<TemplateSection> {
         .collect()
 }
 
+fn full_context_sections(context: &BehavioralContext) -> Vec<TemplateSection> {
+    vec![
+        TemplateSection::new(
+            "Status Summary",
+            status_summary_items(&context.status_summary),
+        ),
+        TemplateSection::new(
+            "Baseline Trait Profile",
+            personality_profile_items(&context.baseline_trait_profile),
+        ),
+        TemplateSection::new(
+            "Effective Trait Profile",
+            personality_profile_items(&context.trait_profile),
+        ),
+        explicit_section(
+            "System Prompt Prefix",
+            context
+                .system_prompt_prefix
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        ),
+        explicit_section("Communication Rules", context.communication_rules.clone()),
+        explicit_section("Decision Rules", context.decision_rules.clone()),
+        explicit_section("Active Commitments", context.active_commitments.clone()),
+        explicit_section("Relationship Context", context.relationship_context.clone()),
+        explicit_section("Adaptive Notes", context.adaptive_notes.clone()),
+        explicit_section("Warnings", warning_items(&context.warnings)),
+        TemplateSection::new("Provenance", provenance_items(&context.provenance)),
+    ]
+}
+
+fn status_summary_items(summary: &StatusSummary) -> Vec<String> {
+    vec![
+        format!("Compose mode: {}", compose_mode_label(summary.compose_mode)),
+        format!("Identity loaded: {}", yes_no(summary.identity_loaded)),
+        format!("Registry verified: {}", yes_no(summary.registry_verified)),
+        format!(
+            "Registry status: {}",
+            summary
+                .registry_status
+                .map(registry_status_label)
+                .unwrap_or("unavailable")
+        ),
+        format!("Reputation loaded: {}", yes_no(summary.reputation_loaded)),
+        format!(
+            "Recovery state: {}",
+            summary
+                .recovery_state
+                .map(recovery_state_label)
+                .unwrap_or("unavailable")
+        ),
+    ]
+}
+
+fn personality_profile_items(profile: &crate::domain::PersonalityProfile) -> Vec<String> {
+    vec![
+        format!("Openness: {:.2}", profile.openness),
+        format!("Conscientiousness: {:.2}", profile.conscientiousness),
+        format!("Initiative: {:.2}", profile.initiative),
+        format!("Directness: {:.2}", profile.directness),
+        format!("Warmth: {:.2}", profile.warmth),
+        format!("Risk tolerance: {:.2}", profile.risk_tolerance),
+        format!("Verbosity: {:.2}", profile.verbosity),
+        format!("Formality: {:.2}", profile.formality),
+    ]
+}
+
+fn warning_items(warnings: &[BehaviorWarning]) -> Vec<String> {
+    warnings
+        .iter()
+        .map(|warning| {
+            format!(
+                "[{}] {}: {}",
+                warning_severity_label(warning.severity),
+                warning.code,
+                warning.message
+            )
+        })
+        .collect()
+}
+
+fn provenance_items(provenance: &ProvenanceReport) -> Vec<String> {
+    vec![
+        format!(
+            "Identity source: {}",
+            input_source_label(provenance.identity_source)
+        ),
+        format!(
+            "Verification source: {}",
+            input_source_label(provenance.verification_source)
+        ),
+        format!(
+            "Reputation source: {}",
+            input_source_label(provenance.reputation_source)
+        ),
+        format!(
+            "Identity fingerprint: {}",
+            provenance
+                .identity_fingerprint
+                .as_deref()
+                .unwrap_or("unavailable")
+        ),
+        format!(
+            "Registry verification timestamp: {}",
+            provenance
+                .registry_verification_at
+                .map(|ts| ts.to_rfc3339())
+                .unwrap_or_else(|| "unavailable".to_owned())
+        ),
+        format!("Config hash: {}", provenance.config_hash),
+        format!("Adaptation hash: {}", provenance.adaptation_hash),
+        format!("Input hash: {}", provenance.input_hash),
+    ]
+}
+
+fn explicit_section(heading: &str, items: Vec<String>) -> TemplateSection {
+    if items.is_empty() {
+        TemplateSection::new(heading, vec!["None.".to_owned()])
+    } else {
+        TemplateSection::new(heading, items)
+    }
+}
+
 fn explain_heading(field: &str) -> String {
     field
         .split('_')
@@ -607,6 +764,57 @@ fn explain_source_label(source: ExplainContributorSource) -> &'static str {
         ExplainContributorSource::Warning => "Warning",
         ExplainContributorSource::Provenance => "Provenance",
     }
+}
+
+fn compose_mode_label(mode: ComposeMode) -> &'static str {
+    match mode {
+        ComposeMode::Normal => "normal",
+        ComposeMode::Restricted => "restricted",
+        ComposeMode::Degraded => "degraded",
+        ComposeMode::BaselineOnly => "baseline-only",
+        ComposeMode::FailClosed => "fail-closed",
+    }
+}
+
+fn registry_status_label(status: RegistryStatus) -> &'static str {
+    match status {
+        RegistryStatus::Active => "active",
+        RegistryStatus::Pending => "pending",
+        RegistryStatus::Suspended => "suspended",
+        RegistryStatus::Revoked => "revoked",
+        RegistryStatus::Retired => "retired",
+    }
+}
+
+fn recovery_state_label(state: RecoveryState) -> &'static str {
+    match state {
+        RecoveryState::Healthy => "healthy",
+        RecoveryState::Recovering => "recovering",
+        RecoveryState::Degraded => "degraded",
+        RecoveryState::Broken => "broken",
+    }
+}
+
+fn input_source_label(source: InputSourceKind) -> &'static str {
+    match source {
+        InputSourceKind::Explicit => "explicit",
+        InputSourceKind::Live => "live",
+        InputSourceKind::Cache => "cache",
+        InputSourceKind::Unavailable => "unavailable",
+    }
+}
+
+fn warning_severity_label(severity: WarningSeverity) -> &'static str {
+    match severity {
+        WarningSeverity::Info => "info",
+        WarningSeverity::Caution => "caution",
+        WarningSeverity::Important => "important",
+        WarningSeverity::Severe => "severe",
+    }
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
 }
 
 fn status_summary_contributors(
@@ -1156,32 +1364,12 @@ fn contributor(source: ExplainContributorSource, detail: String) -> ExplainContr
     ExplainContributor { source, detail }
 }
 
-fn compose_mode_label(mode: ComposeMode) -> &'static str {
-    match mode {
-        ComposeMode::Normal => "normal",
-        ComposeMode::Restricted => "restricted",
-        ComposeMode::Degraded => "degraded",
-        ComposeMode::BaselineOnly => "baseline-only",
-        ComposeMode::FailClosed => "fail-closed",
-    }
-}
-
 fn source_label(source: InputSourceKind) -> &'static str {
     match source {
         InputSourceKind::Explicit => "explicit",
         InputSourceKind::Live => "live",
         InputSourceKind::Cache => "cache",
         InputSourceKind::Unavailable => "unavailable",
-    }
-}
-
-fn registry_status_label(status: RegistryStatus) -> &'static str {
-    match status {
-        RegistryStatus::Active => "active",
-        RegistryStatus::Pending => "pending",
-        RegistryStatus::Suspended => "suspended",
-        RegistryStatus::Revoked => "revoked",
-        RegistryStatus::Retired => "retired",
     }
 }
 
@@ -1601,6 +1789,92 @@ mod tests {
             report.inspect.explain_fields,
             ExplainService.extract(&normalized, &context)
         );
+    }
+
+    #[test]
+    fn build_full_context_report_renders_sections_in_stable_order() {
+        let request = ComposeRequest::new("alpha", "session-1");
+        let config = SoulConfig {
+            agent_id: "alpha".into(),
+            profile_name: "Alpha".into(),
+            ..SoulConfig::default()
+        };
+        let normalized = normalize_inputs(
+            &request,
+            BehaviorInputs {
+                soul_config: config.clone(),
+                adaptation_state: AdaptationState {
+                    notes: vec!["Operator asked for shorter updates".into()],
+                    ..AdaptationState::default()
+                },
+                generated_at: Utc::now(),
+                ..BehaviorInputs::default()
+            },
+        )
+        .expect("normalized inputs");
+
+        let context = build_context(&normalized, ComposeMode::Normal);
+        let report = ExplainService
+            .build_full_context_report(&normalized, &context)
+            .expect("full context report");
+
+        assert!(report.rendered.starts_with("Behavioral Context Alpha"));
+        let status_index = report
+            .rendered
+            .find("## Status Summary")
+            .expect("status section");
+        let baseline_index = report
+            .rendered
+            .find("## Baseline Trait Profile")
+            .expect("baseline section");
+        let effective_index = report
+            .rendered
+            .find("## Effective Trait Profile")
+            .expect("effective section");
+        let prefix_index = report
+            .rendered
+            .find("## System Prompt Prefix")
+            .expect("prefix section");
+
+        assert!(status_index < baseline_index);
+        assert!(baseline_index < effective_index);
+        assert!(effective_index < prefix_index);
+        assert!(report.rendered.contains("## Provenance"));
+        assert_eq!(report.context, context);
+    }
+
+    #[test]
+    fn build_full_context_report_marks_empty_optional_sections_explicitly() {
+        let request = ComposeRequest::new("alpha", "session-1");
+        let config = SoulConfig {
+            agent_id: "alpha".into(),
+            profile_name: "Alpha".into(),
+            ..SoulConfig::default()
+        };
+        let normalized = normalize_inputs(
+            &request,
+            BehaviorInputs {
+                soul_config: config,
+                generated_at: Utc::now(),
+                ..BehaviorInputs::default()
+            },
+        )
+        .expect("normalized inputs");
+
+        let mut context = build_context(&normalized, ComposeMode::Normal);
+        context.active_commitments.clear();
+        context.relationship_context.clear();
+        context.adaptive_notes.clear();
+        context.warnings.clear();
+
+        let report = ExplainService
+            .build_full_context_report(&normalized, &context)
+            .expect("full context report");
+
+        assert!(report.rendered.contains("## Active Commitments\n- None."));
+        assert!(report.rendered.contains("## Relationship Context\n- None."));
+        assert!(report.rendered.contains("## Adaptive Notes\n- None."));
+        assert!(report.rendered.contains("## Warnings\n- None."));
     }
 
     fn build_context(

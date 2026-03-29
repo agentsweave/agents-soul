@@ -162,6 +162,15 @@ impl AppDeps {
         ))
     }
 
+    pub fn full_context_report(
+        &self,
+        request: ComposeRequest,
+    ) -> Result<crate::services::explain::FullContextReport, SoulError> {
+        let artifacts = self.services.compose.compose_artifacts(self, request)?;
+        crate::services::ExplainService
+            .build_full_context_report(&artifacts.normalized, &artifacts.context)
+    }
+
     pub fn explain_report(
         &self,
         request: ComposeRequest,
