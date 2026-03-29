@@ -11,6 +11,7 @@ use crate::{
         InputSourceKind, NormalizedInputs, PersonalityOverride, ProvenanceReport, RegistryStatus,
         StatusSummary, WarningSeverity,
     },
+    services::templates::{TemplateSection, TemplateService},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,6 +172,16 @@ pub struct InspectProvenanceProjection {
     pub reputation_detail: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExplainReport {
+    pub schema_version: u32,
+    pub agent_id: String,
+    pub profile_name: String,
+    pub status_summary: StatusSummary,
+    pub inspect: InspectReport,
+    pub rendered: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ExplainService;
 
@@ -248,6 +259,29 @@ impl ExplainService {
             provenance: inspect_provenance(normalized, context),
             explain_fields: self.extract(normalized, context),
         }
+    }
+
+    pub fn build_explain_report(
+        &self,
+        normalized: &NormalizedInputs,
+        effective_overrides: &EffectiveOverrideSet,
+        context: &BehavioralContext,
+    ) -> Result<ExplainReport, crate::domain::SoulError> {
+        let inspect = self.build_inspect_report(normalized, effective_overrides, context);
+        let rendered = TemplateService::default().render_explain(
+            &normalized.soul_config.templates.explain_template,
+            &format!("Explain {}", context.profile_name),
+            &explain_sections(&inspect),
+        )?;
+
+        Ok(ExplainReport {
+            schema_version: context.schema_version,
+            agent_id: context.agent_id.clone(),
+            profile_name: context.profile_name.clone(),
+            status_summary: context.status_summary.clone(),
+            inspect,
+            rendered,
+        })
     }
 }
 
@@ -520,6 +554,59 @@ fn count_warnings(warnings: &[BehaviorWarning], severity: WarningSeverity) -> us
         .iter()
         .filter(|warning| warning.severity == severity)
         .count()
+}
+
+fn explain_sections(report: &InspectReport) -> Vec<TemplateSection> {
+    report
+        .explain_fields
+        .iter()
+        .map(|field| {
+            TemplateSection::new(
+                explain_heading(&field.field),
+                field
+                    .contributors
+                    .iter()
+                    .map(|contributor| {
+                        format!(
+                            "{}: {}",
+                            explain_source_label(contributor.source),
+                            contributor.detail
+                        )
+                    })
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+fn explain_heading(field: &str) -> String {
+    field
+        .split('_')
+        .map(|segment| {
+            let mut chars = segment.chars();
+            match chars.next() {
+                Some(first) => {
+                    format!("{}{}", first.to_uppercase(), chars.as_str())
+                }
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn explain_source_label(source: ExplainContributorSource) -> &'static str {
+    match source {
+        ExplainContributorSource::Baseline => "Baseline",
+        ExplainContributorSource::UpstreamIdentity => "Upstream identity",
+        ExplainContributorSource::UpstreamRegistryVerification => "Registry verification",
+        ExplainContributorSource::UpstreamRegistryReputation => "Registry reputation",
+        ExplainContributorSource::Adaptation => "Adaptation",
+        ExplainContributorSource::ComposeMode => "Compose mode",
+        ExplainContributorSource::Template => "Template",
+        ExplainContributorSource::Warning => "Warning",
+        ExplainContributorSource::Provenance => "Provenance",
+    }
 }
 
 fn status_summary_contributors(
@@ -1442,6 +1529,77 @@ mod tests {
                 .communication_overrides
                 .iter()
                 .any(|entry| entry.field == "question_style")
+        );
+    }
+
+    #[test]
+    fn build_explain_report_renders_contributor_sections() {
+        let request = ComposeRequest::new("alpha", "session-1");
+        let config = SoulConfig {
+            agent_id: "alpha".into(),
+            profile_name: "Alpha".into(),
+            ..SoulConfig::default()
+        };
+        let normalized = normalize_inputs(
+            &request,
+            BehaviorInputs {
+                soul_config: config.clone(),
+                verification_result: Some(VerificationResult {
+                    status: RegistryStatus::Pending,
+                    standing_level: Some("watch".into()),
+                    reason_code: None,
+                    verified_at: Some(Utc::now()),
+                }),
+                generated_at: Utc::now(),
+                ..BehaviorInputs::default()
+            },
+        )
+        .expect("normalized inputs");
+
+        let effective_overrides = materialize_effective_overrides(&config, None);
+        let context = build_context(&normalized, ComposeMode::BaselineOnly);
+        let report = ExplainService
+            .build_explain_report(&normalized, &effective_overrides, &context)
+            .expect("explain report");
+
+        assert!(report.rendered.contains("## Status Summary"));
+        assert!(report.rendered.contains("Compose mode:"));
+        assert!(report.rendered.contains("## Provenance"));
+        assert_eq!(report.inspect.profile_name, "Alpha");
+    }
+
+    #[test]
+    fn build_explain_report_reuses_inspect_projection() {
+        let request = ComposeRequest::new("alpha", "session-1");
+        let config = SoulConfig {
+            agent_id: "alpha".into(),
+            profile_name: "Alpha".into(),
+            ..SoulConfig::default()
+        };
+        let normalized = normalize_inputs(
+            &request,
+            BehaviorInputs {
+                soul_config: config.clone(),
+                adaptation_state: AdaptationState {
+                    notes: vec!["Operator feedback reduced initiative".into()],
+                    ..AdaptationState::default()
+                },
+                generated_at: Utc::now(),
+                ..BehaviorInputs::default()
+            },
+        )
+        .expect("normalized inputs");
+
+        let effective_overrides = materialize_effective_overrides(&config, None);
+        let context = build_context(&normalized, ComposeMode::Normal);
+        let report = ExplainService
+            .build_explain_report(&normalized, &effective_overrides, &context)
+            .expect("explain report");
+
+        assert_eq!(report.status_summary, report.inspect.status_summary);
+        assert_eq!(
+            report.inspect.explain_fields,
+            ExplainService.extract(&normalized, &context)
         );
     }
 
