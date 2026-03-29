@@ -817,7 +817,7 @@ mod tests {
         assert!(
             context
                 .system_prompt_prefix
-                .starts_with("Identity revoked.")
+                .starts_with("FAIL-CLOSED: identity revoked.")
         );
         assert_eq!(context.communication_rules.len(), 4);
         assert_eq!(context.decision_rules.len(), 2);
@@ -892,7 +892,7 @@ mod tests {
         assert!(
             context
                 .system_prompt_prefix
-                .starts_with("Identity suspended.")
+                .starts_with("RESTRICTED: identity suspended.")
         );
         assert!(
             context

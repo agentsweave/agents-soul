@@ -155,37 +155,70 @@ pub(crate) fn render_builtin_prompt_prefix(
     profile_name: &str,
     max_chars: usize,
 ) -> String {
-    let prefix = match compose_mode {
-        ComposeMode::FailClosed => [
-            "Identity revoked. Do not continue normal autonomous operation.",
-            "Do not present yourself as an active verified agent.",
-            "State the problem plainly.",
-            "Ask for operator intervention.",
-            "Do not take on new commitments.",
-            "Do not claim registry validity.",
-        ]
-        .join("\n"),
-        ComposeMode::Restricted => [
-            "Identity suspended. Operate in restricted advisory mode only.",
-            "Lower initiative.",
-            "Avoid high-risk actions.",
-            "Surface uncertainty clearly.",
-            "Request operator confirmation before consequential changes.",
-        ]
-        .join("\n"),
-        ComposeMode::Degraded => {
-            "Operate cautiously. Upstream identity or registry inputs are degraded, so autonomy and confidence must be reduced."
-                .to_owned()
-        }
-        ComposeMode::BaselineOnly => format!(
-            "Use the baseline soul profile for {profile_name}. Do not invent identity-derived commitments or relationship context that was not loaded."
-        ),
-        ComposeMode::Normal => {
-            format!("You are {profile_name}. Follow the configured soul profile.")
-        }
-    };
+    compact_prompt_prefix(&prompt_prefix_lines(compose_mode, profile_name), max_chars)
+}
 
-    truncate(prefix, max_chars)
+fn prompt_prefix_lines(compose_mode: ComposeMode, profile_name: &str) -> Vec<String> {
+    match compose_mode {
+        ComposeMode::FailClosed => vec![
+            "FAIL-CLOSED: identity revoked.".to_owned(),
+            "Do not continue normal autonomous operation.".to_owned(),
+            "Do not present yourself as an active verified agent.".to_owned(),
+            "State the problem plainly.".to_owned(),
+            "Ask for operator intervention.".to_owned(),
+            "Do not take on new commitments.".to_owned(),
+            "Do not claim registry validity.".to_owned(),
+        ],
+        ComposeMode::Restricted => vec![
+            "RESTRICTED: identity suspended.".to_owned(),
+            "Operate in restricted advisory mode only.".to_owned(),
+            "Lower initiative.".to_owned(),
+            "Avoid high-risk actions.".to_owned(),
+            "Surface uncertainty clearly.".to_owned(),
+            "Request operator confirmation before consequential changes.".to_owned(),
+        ],
+        ComposeMode::Degraded => vec![
+            "DEGRADED: upstream identity or registry inputs are degraded.".to_owned(),
+            "Reduce autonomy and confidence until authority is restored.".to_owned(),
+        ],
+        ComposeMode::BaselineOnly => vec![
+            format!("BASELINE-ONLY: use the baseline soul profile for {profile_name}."),
+            "Do not invent identity-derived commitments or relationship context that was not loaded."
+                .to_owned(),
+        ],
+        ComposeMode::Normal => vec![
+            format!("PROFILE: {profile_name}."),
+            "Follow the configured soul profile.".to_owned(),
+        ],
+    }
+}
+
+fn compact_prompt_prefix(lines: &[String], max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+
+    let mut rendered = String::new();
+    for line in lines {
+        let candidate = if rendered.is_empty() {
+            line.clone()
+        } else {
+            format!("{rendered}\n{line}")
+        };
+
+        if candidate.chars().count() <= max_chars {
+            rendered = candidate;
+            continue;
+        }
+
+        if rendered.is_empty() {
+            return truncate(line.to_owned(), max_chars);
+        }
+
+        return rendered;
+    }
+
+    rendered
 }
 
 fn render_title(title: &str) -> String {
@@ -282,8 +315,33 @@ mod tests {
 
         assert_eq!(
             rendered,
-            "You are Alpha. Follow the configured soul profile."
+            "PROFILE: Alpha.\nFollow the configured soul profile."
         );
+    }
+
+    #[test]
+    fn prompt_prefix_preserves_fail_closed_safety_cue_when_budget_is_tiny() {
+        let rendered = TemplateService::default()
+            .render_prompt_prefix(PROMPT_PREFIX_TEMPLATE, ComposeMode::FailClosed, "Alpha", 12)
+            .expect("prompt prefix should render");
+
+        assert_eq!(rendered, "FAIL-CLOSED:");
+    }
+
+    #[test]
+    fn prompt_prefix_compacts_by_whole_lines_before_dropping_detail() {
+        let first_line = "RESTRICTED: identity suspended.";
+        let rendered = TemplateService::default()
+            .render_prompt_prefix(
+                PROMPT_PREFIX_TEMPLATE,
+                ComposeMode::Restricted,
+                "Alpha",
+                first_line.chars().count(),
+            )
+            .expect("prompt prefix should render");
+
+        assert_eq!(rendered, first_line);
+        assert!(!rendered.contains('\n'));
     }
 
     #[test]
