@@ -159,6 +159,7 @@ pub(crate) fn render_builtin_prompt_prefix(
 }
 
 fn prompt_prefix_lines(compose_mode: ComposeMode, profile_name: &str) -> Vec<String> {
+    let escaped_profile_name = escape_text(profile_name);
     match compose_mode {
         ComposeMode::FailClosed => vec![
             "FAIL-CLOSED: identity revoked.".to_owned(),
@@ -182,12 +183,14 @@ fn prompt_prefix_lines(compose_mode: ComposeMode, profile_name: &str) -> Vec<Str
             "Reduce autonomy and confidence until authority is restored.".to_owned(),
         ],
         ComposeMode::BaselineOnly => vec![
-            format!("BASELINE-ONLY: use the baseline soul profile for {profile_name}."),
+            format!(
+                "BASELINE-ONLY: use the baseline soul profile for {escaped_profile_name}."
+            ),
             "Do not invent identity-derived commitments or relationship context that was not loaded."
                 .to_owned(),
         ],
         ComposeMode::Normal => vec![
-            format!("PROFILE: {profile_name}."),
+            format!("PROFILE: {escaped_profile_name}."),
             "Follow the configured soul profile.".to_owned(),
         ],
     }
@@ -345,6 +348,23 @@ mod tests {
     }
 
     #[test]
+    fn prompt_prefix_escapes_profile_name_free_text() {
+        let rendered = TemplateService::default()
+            .render_prompt_prefix(
+                PROMPT_PREFIX_TEMPLATE,
+                ComposeMode::Normal,
+                "Alpha <Builder> & \"owner\"",
+                512,
+            )
+            .expect("prompt prefix should render");
+
+        assert_eq!(
+            rendered,
+            "PROFILE: Alpha &lt;Builder&gt; &amp; &quot;owner&quot;.\nFollow the configured soul profile."
+        );
+    }
+
+    #[test]
     fn document_rendering_escapes_free_text_and_omits_missing_sections() {
         let rendered = TemplateService::default()
             .render_full_context(
@@ -369,6 +389,32 @@ mod tests {
         assert!(rendered.contains("trusted &lt;operator&gt; &amp; shipping partner"));
         assert!(rendered.contains("Keep &quot;commitments&quot; stable"));
         assert!(!rendered.contains("## Commitments"));
+    }
+
+    #[test]
+    fn full_context_renderer_preserves_clean_section_spacing_and_escapes_items() {
+        let rendered = TemplateService::default()
+            .render_full_context(
+                FULL_CONTEXT_TEMPLATE,
+                "Alpha <Builder>",
+                &[
+                    TemplateSection::new(
+                        "Commitments",
+                        vec!["Ship <fast> & keep \"trust\"".to_owned()],
+                    ),
+                    TemplateSection::new("Warnings", vec![]),
+                    TemplateSection::new(
+                        "Relationships",
+                        vec!["operator note: primary 'owner' & ally".to_owned()],
+                    ),
+                ],
+            )
+            .expect("full context should render");
+
+        assert_eq!(
+            rendered,
+            "Alpha &lt;Builder&gt;\n## Commitments\n- Ship &lt;fast&gt; &amp; keep &quot;trust&quot;\n\n## Relationships\n- operator note: primary &#39;owner&#39; &amp; ally"
+        );
     }
 
     #[test]
