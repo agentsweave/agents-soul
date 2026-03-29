@@ -1,5 +1,5 @@
 use crate::{
-    app::{config::ApplicationConfig, deps::SoulDependencies},
+    app::{config::ApplicationConfig, deps::AppDeps},
     cli,
     domain::SoulError,
 };
@@ -36,11 +36,11 @@ impl CrateLayer {
 #[derive(Debug, Clone, Default)]
 pub struct SoulRuntime {
     config: ApplicationConfig,
-    deps: SoulDependencies,
+    deps: AppDeps,
 }
 
 impl SoulRuntime {
-    pub fn new(config: ApplicationConfig, deps: SoulDependencies) -> Self {
+    pub fn new(config: ApplicationConfig, deps: AppDeps) -> Self {
         Self { config, deps }
     }
 
@@ -48,12 +48,19 @@ impl SoulRuntime {
         &self.config
     }
 
-    pub fn deps(&self) -> &SoulDependencies {
+    pub fn deps(&self) -> &AppDeps {
         &self.deps
     }
 
     pub fn run(&self) -> Result<(), SoulError> {
-        cli::run()
+        self.dispatch_with(cli::run)
+    }
+
+    pub fn dispatch_with<F>(&self, entrypoint: F) -> Result<(), SoulError>
+    where
+        F: FnOnce(&ApplicationConfig, &AppDeps) -> Result<(), SoulError>,
+    {
+        entrypoint(&self.config, &self.deps)
     }
 }
 

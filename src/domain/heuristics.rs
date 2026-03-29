@@ -31,16 +31,24 @@ pub struct DecisionHeuristic {
 impl DecisionHeuristic {
     pub fn validate(&self) -> Result<(), SoulError> {
         if self.heuristic_id.trim().is_empty() {
-            return Err(SoulError::EmptyField("decision_heuristics[].heuristic_id"));
+            return Err(SoulError::InvalidConfig(
+                "decision_heuristics[].heuristic_id must not be empty".into(),
+            ));
         }
         if self.title.trim().is_empty() {
-            return Err(SoulError::EmptyField("decision_heuristics[].title"));
+            return Err(SoulError::InvalidConfig(
+                "decision_heuristics[].title must not be empty".into(),
+            ));
         }
         if self.trigger.trim().is_empty() {
-            return Err(SoulError::EmptyField("decision_heuristics[].trigger"));
+            return Err(SoulError::InvalidConfig(
+                "decision_heuristics[].trigger must not be empty".into(),
+            ));
         }
         if self.instruction.trim().is_empty() {
-            return Err(SoulError::EmptyField("decision_heuristics[].instruction"));
+            return Err(SoulError::InvalidConfig(
+                "decision_heuristics[].instruction must not be empty".into(),
+            ));
         }
         Ok(())
     }

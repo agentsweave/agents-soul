@@ -1,30 +1,44 @@
+use std::{
+    error::Error,
+    fs,
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use agents_soul::SoulDependencies;
 use agents_soul::app::config::WorkspacePaths;
 use agents_soul::domain::{
     BehaviorWarning, BehavioralContext, CommunicationStyle, ComposeMode, ComposeRequest,
     InputSourceKind, OfflineRegistryBehavior, PersonalityProfile, ProvenanceReport, RecoveryState,
-    RegistryStatus, RevokedBehavior, SoulConfig, SoulLimits, StatusSummary, TemplateConfig,
-    WarningSeverity,
+    RegistryStatus, RevokedBehavior, SoulConfig, SoulError, SoulLimits, StatusSummary,
+    TemplateConfig, WarningSeverity,
 };
 
 #[test]
-fn workspace_paths_match_planned_layout() {
+fn workspace_paths_expose_required_state_and_optional_cache_helper() {
     let paths = WorkspacePaths::new("/tmp/example-soul");
+    let contract = paths.contract_paths();
 
     assert_eq!(
-        paths.config_path().to_string_lossy(),
+        contract.config_path().to_string_lossy(),
         "/tmp/example-soul/soul.toml"
     );
     assert_eq!(
-        paths.adaptation_db_path().to_string_lossy(),
+        contract.adaptation_db_path().to_string_lossy(),
         "/tmp/example-soul/.soul/patterns.sqlite"
+    );
+    assert_eq!(
+        contract.adaptation_log_path().to_string_lossy(),
+        "/tmp/example-soul/.soul/adaptation_log.jsonl"
+    );
+    assert!(
+        !contract
+            .required_files()
+            .contains(&paths.context_cache_path())
     );
     assert_eq!(
         paths.context_cache_path().to_string_lossy(),
         "/tmp/example-soul/.soul/context_cache.json"
-    );
-    assert_eq!(
-        paths.adaptation_log_path().to_string_lossy(),
-        "/tmp/example-soul/.soul/adaptation_log.jsonl"
     );
 }
 
@@ -130,4 +144,47 @@ fn compatibility_modules_point_at_canonical_contract_types() {
         context.status_summary.compose_mode,
         agents_soul::domain::compose::ComposeMode::BaselineOnly
     );
+}
+
+#[test]
+fn compose_requires_soul_toml_even_when_cache_exists() -> Result<(), Box<dyn Error>> {
+    let workspace = test_workspace("config-required");
+    fs::create_dir_all(workspace.join(".soul"))?;
+    fs::write(
+        workspace.join(".soul/context_cache.json"),
+        r#"{
+            "identity_snapshot":{
+                "agent_id":"alpha",
+                "recovery_state":"healthy",
+                "active_commitments":["cached"]
+            }
+        }"#,
+    )?;
+
+    let mut request = ComposeRequest::new("alpha", "session-1");
+    request.workspace_id = workspace.display().to_string();
+
+    let error = SoulDependencies::default()
+        .compose_context(request)
+        .expect_err("missing soul.toml should fail instead of falling back to defaults");
+
+    assert!(matches!(error, SoulError::ConfigRead { .. }));
+
+    cleanup_workspace(&workspace)?;
+    Ok(())
+}
+
+fn test_workspace(label: &str) -> PathBuf {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!("agents-soul-{label}-{suffix}"))
+}
+
+fn cleanup_workspace(workspace: &Path) -> Result<(), Box<dyn Error>> {
+    if workspace.exists() {
+        fs::remove_dir_all(workspace)?;
+    }
+    Ok(())
 }

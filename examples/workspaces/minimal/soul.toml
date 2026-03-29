@@ -1,0 +1,6 @@
+agent_id = "agent.alpha"
+profile_name = "Alpha Minimal"
+
+[sources]
+identity_workspace = "~/.agents/alpha"
+registry_url = "http://127.0.0.1:7700"

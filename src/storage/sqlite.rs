@@ -335,7 +335,7 @@ fn clear_trait_override(
         "verbosity" => overrides.verbosity = 0.0,
         "formality" => overrides.formality = 0.0,
         _ => {
-            return Err(SoulError::InvalidConfig(format!(
+            return Err(SoulError::Validation(format!(
                 "unknown trait reset target `{target_key}`"
             )));
         }
@@ -356,7 +356,7 @@ fn clear_communication_override(
         "feedback_style" => overrides.feedback_style = None,
         "conflict_style" => overrides.conflict_style = None,
         _ => {
-            return Err(SoulError::InvalidConfig(format!(
+            return Err(SoulError::Validation(format!(
                 "unknown communication reset target `{target_key}`"
             )));
         }

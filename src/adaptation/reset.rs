@@ -38,13 +38,13 @@ pub struct AdaptiveResetResult {
 impl AdaptiveResetRequest {
     fn validate(&self) -> Result<(), SoulError> {
         if self.reset_id.trim().is_empty() {
-            return Err(SoulError::EmptyField("reset_id"));
+            return Err(SoulError::Validation("reset_id must not be empty".into()));
         }
         if self.agent_id.trim().is_empty() {
-            return Err(SoulError::EmptyField("agent_id"));
+            return Err(SoulError::Validation("agent_id must not be empty".into()));
         }
         if matches!(self.scope, ResetScope::All) && self.target_key.is_some() {
-            return Err(SoulError::InvalidConfig(
+            return Err(SoulError::Validation(
                 "reset target_key is only valid for targeted resets".into(),
             ));
         }
@@ -53,7 +53,7 @@ impl AdaptiveResetRequest {
             .as_deref()
             .is_some_and(|target_key| target_key.trim().is_empty())
         {
-            return Err(SoulError::EmptyField("target_key"));
+            return Err(SoulError::Validation("target_key must not be empty".into()));
         }
         Ok(())
     }

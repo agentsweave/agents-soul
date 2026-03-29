@@ -1,6 +1,25 @@
+use std::{
+    error::Error,
+    fs,
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use agents_soul::{
     ComposeMode, SoulDependencies, SoulError, api, app, cli, domain::ComposeRequest, mcp,
 };
+use chrono::{DateTime, TimeZone, Utc};
+
+#[derive(Debug, Clone)]
+struct FixedClock;
+
+impl agents_soul::app::deps::ComposeClock for FixedClock {
+    fn now(&self) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 3, 29, 8, 0, 0)
+            .single()
+            .expect("fixed timestamp should be valid")
+    }
+}
 
 #[test]
 fn crate_layout_matches_planned_boundary_order() -> Result<(), String> {
@@ -44,8 +63,13 @@ fn crate_layout_matches_planned_boundary_order() -> Result<(), String> {
 
 #[test]
 fn api_and_mcp_delegate_to_the_shared_compose_service() -> Result<(), String> {
-    let deps = SoulDependencies::default();
-    let request = ComposeRequest::new("agent.alpha", "session.alpha");
+    let workspace = test_workspace("boundary-parity");
+    fs::create_dir_all(&workspace).map_err(|error| error.to_string())?;
+    write_soul_config(&workspace, "agent.alpha", "Alpha").map_err(|error| error.to_string())?;
+
+    let deps = SoulDependencies::default().with_clock(FixedClock);
+    let mut request = ComposeRequest::new("agent.alpha", "session.alpha");
+    request.workspace_id = workspace.display().to_string();
     let expected = deps
         .compose_context(request.clone())
         .map_err(|error| error.to_string())?;
@@ -66,6 +90,7 @@ fn api_and_mcp_delegate_to_the_shared_compose_service() -> Result<(), String> {
         ));
     }
 
+    cleanup_workspace(&workspace).map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -73,7 +98,7 @@ fn api_and_mcp_delegate_to_the_shared_compose_service() -> Result<(), String> {
 fn transports_share_the_same_core_error_mapping() {
     let deps = SoulDependencies::default();
     let degraded = SoulError::RegistryUnavailable;
-    let degraded_expected = degraded.transport_error();
+    let degraded_expected = app::errors::map_soul_error(&degraded);
 
     assert_eq!(deps.map_error(&degraded), degraded_expected);
     assert_eq!(
@@ -91,7 +116,7 @@ fn transports_share_the_same_core_error_mapping() {
     );
 
     let fail_closed = SoulError::RevokedStanding;
-    let fail_closed_expected = fail_closed.transport_error();
+    let fail_closed_expected = app::errors::map_soul_error(&fail_closed);
 
     assert_eq!(
         fail_closed_expected.compose_mode_hint,
@@ -101,4 +126,33 @@ fn transports_share_the_same_core_error_mapping() {
         cli::compose::map_compose_error(&fail_closed),
         fail_closed_expected
     );
+}
+
+fn test_workspace(label: &str) -> PathBuf {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!("agents-soul-{label}-{suffix}"))
+}
+
+fn cleanup_workspace(workspace: &Path) -> Result<(), Box<dyn Error>> {
+    if workspace.exists() {
+        fs::remove_dir_all(workspace)?;
+    }
+    Ok(())
+}
+
+fn write_soul_config(
+    workspace: &Path,
+    agent_id: &str,
+    profile_name: &str,
+) -> Result<(), Box<dyn Error>> {
+    let config = agents_soul::domain::SoulConfig {
+        agent_id: agent_id.to_owned(),
+        profile_name: profile_name.to_owned(),
+        ..agents_soul::domain::SoulConfig::default()
+    };
+    fs::write(workspace.join("soul.toml"), toml::to_string(&config)?)?;
+    Ok(())
 }

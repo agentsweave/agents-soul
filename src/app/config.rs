@@ -1,5 +1,6 @@
 use std::{
     env, fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
 };
 
@@ -10,6 +11,35 @@ pub const SOUL_STATE_DIR: &str = ".soul";
 pub const ADAPTATION_DB_FILE: &str = "patterns.sqlite";
 pub const CONTEXT_CACHE_FILE: &str = "context_cache.json";
 pub const ADAPTATION_LOG_FILE: &str = "adaptation_log.jsonl";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceContractPaths {
+    config_path: PathBuf,
+    adaptation_db_path: PathBuf,
+    adaptation_log_path: PathBuf,
+}
+
+impl WorkspaceContractPaths {
+    pub fn config_path(&self) -> &Path {
+        &self.config_path
+    }
+
+    pub fn adaptation_db_path(&self) -> &Path {
+        &self.adaptation_db_path
+    }
+
+    pub fn adaptation_log_path(&self) -> &Path {
+        &self.adaptation_log_path
+    }
+
+    pub fn required_files(&self) -> Vec<PathBuf> {
+        vec![
+            self.config_path.clone(),
+            self.adaptation_db_path.clone(),
+            self.adaptation_log_path.clone(),
+        ]
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspacePaths {
@@ -45,6 +75,14 @@ impl WorkspacePaths {
 
     pub fn adaptation_log_path(&self) -> PathBuf {
         self.state_dir().join(ADAPTATION_LOG_FILE)
+    }
+
+    pub fn contract_paths(&self) -> WorkspaceContractPaths {
+        WorkspaceContractPaths {
+            config_path: self.config_path(),
+            adaptation_db_path: self.adaptation_db_path(),
+            adaptation_log_path: self.adaptation_log_path(),
+        }
     }
 }
 
@@ -84,9 +122,19 @@ pub fn load_soul_config(workspace_root: impl Into<PathBuf>) -> Result<SoulConfig
     validate_workspace_root(paths.root())?;
 
     let config_path = paths.config_path();
-    let raw = fs::read_to_string(&config_path).map_err(|error| SoulError::ConfigRead {
-        path: config_path.display().to_string(),
-        message: error.to_string(),
+    let path = config_path.display().to_string();
+    let raw = fs::read_to_string(&config_path).map_err(|error| {
+        let message = match error.kind() {
+            ErrorKind::NotFound => format!(
+                "required soul config `soul.toml` is missing; create `{path}` in the workspace root"
+            ),
+            ErrorKind::PermissionDenied => {
+                format!("permission denied while reading `{path}`; ensure the file is readable")
+            }
+            _ => error.to_string(),
+        };
+
+        SoulError::ConfigRead { path, message }
     })?;
 
     let parsed = toml::from_str::<SoulConfig>(&raw).map_err(|error| SoulError::ConfigParse {

@@ -9,6 +9,7 @@ pub mod provenance;
 pub mod relationships;
 pub mod templates;
 pub mod warnings;
+pub mod workspace_config;
 
 pub use commitments::CommitmentsService;
 pub use communication::CommunicationRulesService;
@@ -18,10 +19,12 @@ pub use profile::EffectiveProfileService;
 pub use provenance::ProvenanceService;
 pub use relationships::RelationshipsService;
 pub use warnings::WarningService;
+pub use workspace_config::WorkspaceConfigService;
 
 pub type ServiceError = crate::domain::SoulError;
 
 #[derive(Debug, Clone, Default)]
 pub struct SoulServices {
     pub compose: ComposeService,
+    pub workspace_config: WorkspaceConfigService,
 }

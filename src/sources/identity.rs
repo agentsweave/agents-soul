@@ -91,12 +91,17 @@ impl IdentityReader {
     }
 
     pub fn parse_snapshot(&self, content: &str) -> Result<SessionIdentitySnapshot, SoulError> {
-        let snapshot: SessionIdentitySnapshot = serde_json::from_str(content).map_err(|error| {
-            SoulError::InvalidConfig(format!("invalid identity snapshot payload: {error}"))
-        })?;
+        let snapshot: SessionIdentitySnapshot =
+            serde_json::from_str(content).map_err(|error| SoulError::UpstreamInvalid {
+                input: "identity-snapshot",
+                message: error.to_string(),
+            })?;
 
         if snapshot.agent_id.trim().is_empty() {
-            return Err(SoulError::EmptyField("identity_snapshot.agent_id"));
+            return Err(SoulError::UpstreamInvalid {
+                input: "identity-snapshot",
+                message: "field `identity_snapshot.agent_id` must not be empty".into(),
+            });
         }
 
         Ok(snapshot)

@@ -155,14 +155,16 @@ impl RegistryReader {
     }
 
     pub fn parse_verification(&self, content: &str) -> Result<VerificationResult, SoulError> {
-        serde_json::from_str(content).map_err(|error| {
-            SoulError::InvalidConfig(format!("invalid registry verification payload: {error}"))
+        serde_json::from_str(content).map_err(|error| SoulError::UpstreamInvalid {
+            input: "registry-verification",
+            message: error.to_string(),
         })
     }
 
     pub fn parse_reputation(&self, content: &str) -> Result<ReputationSummary, SoulError> {
-        serde_json::from_str(content).map_err(|error| {
-            SoulError::InvalidConfig(format!("invalid registry reputation payload: {error}"))
+        serde_json::from_str(content).map_err(|error| SoulError::UpstreamInvalid {
+            input: "registry-reputation",
+            message: error.to_string(),
         })
     }
 

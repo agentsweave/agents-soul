@@ -2,6 +2,7 @@ pub mod adaptation;
 pub mod behavioral_context;
 pub mod compose;
 pub mod config;
+pub mod config_patch;
 pub mod context;
 pub mod errors;
 pub mod heuristics;
@@ -20,7 +21,10 @@ pub use behavioral_context::{BehaviorWarning, BehavioralContext, WarningSeverity
 pub use config::{
     AdaptationConfig, CURRENT_SCHEMA_VERSION, SoulConfig, SourceConfig, TemplateConfig,
 };
-pub use errors::{SoulError, SoulErrorCategory, SoulTransportError};
+pub use config_patch::{
+    CommunicationStylePatch, DecisionHeuristicPatch, PersonalityProfilePatch, SoulConfigPatch,
+};
+pub use errors::{SoulError, SoulErrorCategory};
 pub use heuristics::DecisionHeuristic;
 pub use inputs::{
     BehaviorInputs, ComposeRequest, InputProvenance, InputSourceKind, NormalizedInputs,

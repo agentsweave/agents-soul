@@ -1,27 +1,17 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::status::ComposeMode;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SoulErrorCategory {
-    InvalidConfig,
+    LocalConfig,
+    RequestValidation,
     UpstreamUnavailable,
-    RevokedStanding,
+    UpstreamInvalid,
+    FailClosed,
     StorageFailure,
     TemplateFailure,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SoulTransportError {
-    pub code: &'static str,
-    pub category: SoulErrorCategory,
-    pub message: String,
-    pub compose_mode_hint: Option<ComposeMode>,
-    pub http_status: u16,
-    pub cli_exit_code: u8,
-    pub mcp_error_code: i32,
+    InternalFailure,
 }
 
 #[derive(Debug, Error, Clone, PartialEq)]
@@ -32,6 +22,8 @@ pub enum SoulError {
     ConfigParse { path: String, message: String },
     #[error("invalid soul config: {0}")]
     InvalidConfig(String),
+    #[error("validation failed: {0}")]
+    Validation(String),
     #[error("field `{field}` must be within 0.0..=1.0, got {value}")]
     InvalidTraitValue { field: &'static str, value: f32 },
     #[error("field `{0}` must not be empty")]
@@ -40,6 +32,11 @@ pub enum SoulError {
     DuplicateHeuristicId(String),
     #[error("required upstream inputs are broken")]
     RequiredInputsBroken,
+    #[error("upstream input `{input}` is invalid: {message}")]
+    UpstreamInvalid {
+        input: &'static str,
+        message: String,
+    },
     #[error("identity input unavailable")]
     IdentityUnavailable,
     #[error("registry verification unavailable")]
@@ -58,55 +55,32 @@ pub enum SoulError {
         template: &'static str,
         message: String,
     },
+    #[error("internal runtime failure: {0}")]
+    Internal(String),
 }
 
 impl SoulError {
     pub fn category(&self) -> SoulErrorCategory {
         match self {
-            Self::ConfigRead { .. }
-            | Self::ConfigParse { .. }
-            | Self::InvalidConfig(_)
+            Self::ConfigRead { .. } | Self::ConfigParse { .. } | Self::InvalidConfig(_) => {
+                SoulErrorCategory::LocalConfig
+            }
+            Self::Validation(_)
             | Self::InvalidTraitValue { .. }
             | Self::EmptyField(_)
-            | Self::DuplicateHeuristicId(_) => SoulErrorCategory::InvalidConfig,
-            Self::RequiredInputsBroken | Self::IdentityUnavailable | Self::RegistryUnavailable => {
+            | Self::DuplicateHeuristicId(_) => SoulErrorCategory::RequestValidation,
+            Self::IdentityUnavailable | Self::RegistryUnavailable => {
                 SoulErrorCategory::UpstreamUnavailable
             }
-            Self::RevokedStanding => SoulErrorCategory::RevokedStanding,
+            Self::RequiredInputsBroken | Self::UpstreamInvalid { .. } => {
+                SoulErrorCategory::UpstreamInvalid
+            }
+            Self::RevokedStanding => SoulErrorCategory::FailClosed,
             Self::Storage(_) => SoulErrorCategory::StorageFailure,
             Self::TemplateLoad { .. } | Self::TemplateRender { .. } => {
                 SoulErrorCategory::TemplateFailure
             }
-        }
-    }
-
-    pub fn compose_mode_hint(&self) -> Option<ComposeMode> {
-        match self.category() {
-            SoulErrorCategory::UpstreamUnavailable => Some(ComposeMode::Degraded),
-            SoulErrorCategory::RevokedStanding => Some(ComposeMode::FailClosed),
-            SoulErrorCategory::InvalidConfig
-            | SoulErrorCategory::StorageFailure
-            | SoulErrorCategory::TemplateFailure => None,
-        }
-    }
-
-    pub fn transport_error(&self) -> SoulTransportError {
-        let (code, http_status, cli_exit_code, mcp_error_code) = match self.category() {
-            SoulErrorCategory::InvalidConfig => ("invalid-config", 400, 2, 1001),
-            SoulErrorCategory::UpstreamUnavailable => ("upstream-unavailable", 503, 3, 1002),
-            SoulErrorCategory::RevokedStanding => ("revoked-standing", 403, 4, 1003),
-            SoulErrorCategory::StorageFailure => ("storage-failure", 500, 5, 1004),
-            SoulErrorCategory::TemplateFailure => ("template-failure", 500, 6, 1005),
-        };
-
-        SoulTransportError {
-            code,
-            category: self.category(),
-            message: self.to_string(),
-            compose_mode_hint: self.compose_mode_hint(),
-            http_status,
-            cli_exit_code,
-            mcp_error_code,
+            Self::Internal(_) => SoulErrorCategory::InternalFailure,
         }
     }
 }

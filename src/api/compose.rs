@@ -1,6 +1,9 @@
 use crate::{
-    app::deps::SoulDependencies,
-    domain::{BehavioralContext, ComposeRequest, SoulError, SoulTransportError},
+    app::{
+        deps::SoulDependencies,
+        errors::{SoulHttpErrorResponse, SoulTransportError, map_soul_error},
+    },
+    domain::{BehavioralContext, ComposeRequest, SoulError},
     services::ServiceError,
 };
 
@@ -12,5 +15,9 @@ pub fn compose_context(
 }
 
 pub fn map_compose_error(error: &SoulError) -> SoulTransportError {
-    error.transport_error()
+    map_soul_error(error)
+}
+
+pub fn compose_error_response(error: &SoulError) -> SoulHttpErrorResponse {
+    map_compose_error(error).http_response()
 }

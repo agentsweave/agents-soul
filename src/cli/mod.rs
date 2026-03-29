@@ -4,8 +4,11 @@ pub mod explain;
 pub mod inspect;
 pub mod reset;
 
-use crate::domain::SoulError;
+use crate::{
+    app::{config::ApplicationConfig, deps::AppDeps},
+    domain::SoulError,
+};
 
-pub fn run() -> Result<(), SoulError> {
+pub fn run(_config: &ApplicationConfig, _deps: &AppDeps) -> Result<(), SoulError> {
     Ok(())
 }

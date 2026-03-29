@@ -3,7 +3,7 @@ fn main() -> std::process::ExitCode {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("{err}");
-            std::process::ExitCode::FAILURE
+            agents_soul::app::errors::map_soul_error(&err).exit_code()
         }
     }
 }

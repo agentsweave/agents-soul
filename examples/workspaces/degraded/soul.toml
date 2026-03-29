@@ -1,0 +1,19 @@
+agent_id = "agent.alpha"
+profile_name = "Alpha Degraded Safe"
+
+[limits]
+max_trait_drift = 0.10
+max_prompt_prefix_chars = 3000
+max_adaptive_rules = 12
+offline_registry_behavior = "baseline-only"
+revoked_behavior = "fail-closed"
+
+[sources]
+identity_workspace = "~/.agents/alpha"
+registry_url = "http://127.0.0.1:7700"
+registry_agent_id = "agent.alpha"
+
+[adaptation]
+enabled = false
+learning_window_days = 14
+min_interactions_for_adapt = 5

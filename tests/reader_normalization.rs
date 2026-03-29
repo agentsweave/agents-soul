@@ -11,7 +11,12 @@ use agents_soul::domain::{
     SourceConfig, VerificationResult, WarningSeverity,
 };
 use agents_soul::sources::{
-    cache::read_cached_inputs_path, identity::IdentityReader, normalize::normalize_inputs,
+    cache::{
+        CachedInputs, context_cache_key, read_cached_inputs, read_cached_inputs_path,
+        write_cached_inputs,
+    },
+    identity::IdentityReader,
+    normalize::normalize_inputs,
     registry::RegistryReader,
 };
 use chrono::Utc;
@@ -160,22 +165,28 @@ fn identity_reader_prefers_explicit_path_over_live_and_cache() -> Result<(), Box
 fn registry_reader_uses_cache_when_live_files_are_missing() -> Result<(), Box<dyn Error>> {
     let workspace = test_workspace("registry-cache");
     fs::create_dir_all(workspace.join(".soul"))?;
-    write_json(
-        workspace.join(".soul/context_cache.json"),
-        r#"{
-            "verification_result":{
-                "status":"active",
-                "standing_level":"good"
-            },
-            "reputation_summary":{
-                "score_total":4.8,
-                "context":["cache-hit"]
-            }
-        }"#,
-    )?;
 
     let mut request = ComposeRequest::new("alpha", "session-1");
     request.workspace_id = workspace.display().to_string();
+    write_cached_inputs(
+        &request,
+        &CachedInputs {
+            cache_key: None,
+            identity_snapshot: None,
+            verification_result: Some(VerificationResult {
+                status: RegistryStatus::Active,
+                standing_level: Some("good".to_owned()),
+                reason_code: None,
+                verified_at: None,
+            }),
+            reputation_summary: Some(agents_soul::domain::ReputationSummary {
+                score_total: Some(4.8),
+                score_recent_30d: None,
+                last_event_at: None,
+                context: vec!["cache-hit".to_owned()],
+            }),
+        },
+    )?;
 
     let verification = RegistryReader.load_verification(&request)?;
     let reputation = RegistryReader.load_reputation(&request)?;
@@ -256,6 +267,81 @@ fn invalid_context_cache_returns_warning_instead_of_failing() -> Result<(), Box<
             .warnings
             .iter()
             .any(|warning| warning.code == "context_cache_invalid")
+    );
+
+    cleanup_workspace(&workspace)?;
+    Ok(())
+}
+
+#[test]
+fn context_cache_with_mismatched_key_is_bypassed() -> Result<(), Box<dyn Error>> {
+    let workspace = test_workspace("cache-key-mismatch");
+    fs::create_dir_all(workspace.join(".soul"))?;
+    let mut request = ComposeRequest::new("alpha", "session-1");
+    request.workspace_id = workspace.display().to_string();
+    write_json(
+        workspace.join(".soul/context_cache.json"),
+        r#"{
+            "cache_key":"ctx_deadbeef",
+            "identity_snapshot":{
+                "agent_id":"alpha",
+                "recovery_state":"healthy",
+                "active_commitments":["cache"]
+            }
+        }"#,
+    )?;
+
+    let cached = read_cached_inputs(&request)?;
+    assert!(cached.cached_inputs.is_none());
+    assert!(
+        cached
+            .warnings
+            .iter()
+            .any(|warning| warning.code == "context_cache_key_mismatch")
+    );
+
+    cleanup_workspace(&workspace)?;
+    Ok(())
+}
+
+#[test]
+fn cache_writer_persists_derived_key_for_future_reads() -> Result<(), Box<dyn Error>> {
+    let workspace = test_workspace("cache-write-keyed");
+    fs::create_dir_all(workspace.join(".soul"))?;
+    let mut request = ComposeRequest::new("alpha", "session-cache");
+    request.workspace_id = workspace.display().to_string();
+    let cached_inputs = CachedInputs {
+        cache_key: None,
+        identity_snapshot: Some(SessionIdentitySnapshot {
+            agent_id: "alpha".to_owned(),
+            display_name: Some("Alpha".to_owned()),
+            recovery_state: RecoveryState::Healthy,
+            active_commitments: vec!["cache".to_owned()],
+            durable_preferences: Vec::new(),
+            relationship_markers: Vec::new(),
+            facts: Vec::new(),
+            warnings: Vec::new(),
+            fingerprint: None,
+        }),
+        verification_result: None,
+        reputation_summary: None,
+    };
+
+    write_cached_inputs(&request, &cached_inputs)?;
+    let loaded = read_cached_inputs(&request)?;
+    let loaded_inputs = loaded.cached_inputs.expect("cache should load");
+
+    assert!(loaded.warnings.is_empty());
+    assert_eq!(
+        loaded_inputs.cache_key.as_deref(),
+        Some(context_cache_key(&request).as_str())
+    );
+    assert_eq!(
+        loaded_inputs
+            .identity_snapshot
+            .expect("identity snapshot")
+            .agent_id,
+        "alpha"
     );
 
     cleanup_workspace(&workspace)?;

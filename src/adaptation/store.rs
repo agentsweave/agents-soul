@@ -79,17 +79,17 @@ impl AdaptiveWriteRequest {
 
     fn validate(&self) -> Result<(), SoulError> {
         if self.agent_id.trim().is_empty() {
-            return Err(SoulError::EmptyField("agent_id"));
+            return Err(SoulError::Validation("agent_id must not be empty".into()));
         }
         if self.evidence_window_size == 0 {
-            return Err(SoulError::InvalidConfig(
+            return Err(SoulError::Validation(
                 "adaptive writes require evidence_window_size > 0".into(),
             ));
         }
         for override_rule in &self.heuristic_overrides {
             if override_rule.heuristic_id.trim().is_empty() {
-                return Err(SoulError::EmptyField(
-                    "adaptation.heuristic_overrides[].heuristic_id",
+                return Err(SoulError::Validation(
+                    "adaptation.heuristic_overrides[].heuristic_id must not be empty".into(),
                 ));
             }
         }
@@ -274,7 +274,7 @@ pub fn persist_adaptation_write(
 
     if existing
         .as_ref()
-        .is_some_and(|stored| stored.equivalent_payload(&candidate))
+        .is_some_and(|stored: &StoredAdaptationState| stored.equivalent_payload(&candidate))
     {
         return Ok(AdaptiveWriteResult {
             effect: AdaptiveWriteEffect::Unchanged,

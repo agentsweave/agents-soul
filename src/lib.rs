@@ -16,7 +16,11 @@ pub mod sources;
 pub mod storage;
 
 pub use app::{
-    deps::{SoulDependencies, SourceDependencies},
+    deps::{AppDeps, SoulDependencies, SourceDependencies},
+    errors::{
+        SoulHttpError, SoulHttpErrorBody, SoulHttpErrorResponse, SoulMcpToolError,
+        SoulMcpToolErrorData, SoulTransportError, compose_mode_hint_for, map_soul_error,
+    },
     runtime::{CrateLayer, SoulRuntime, core_layers, crate_layout, transport_layers},
 };
 pub use domain::*;

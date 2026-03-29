@@ -19,13 +19,19 @@ pub struct TemplateConfig {
 impl TemplateConfig {
     pub fn validate(&self) -> Result<(), SoulError> {
         if self.prompt_prefix_template.trim().is_empty() {
-            return Err(SoulError::EmptyField("templates.prompt_prefix_template"));
+            return Err(SoulError::InvalidConfig(
+                "templates.prompt_prefix_template must not be empty".into(),
+            ));
         }
         if self.full_context_template.trim().is_empty() {
-            return Err(SoulError::EmptyField("templates.full_context_template"));
+            return Err(SoulError::InvalidConfig(
+                "templates.full_context_template must not be empty".into(),
+            ));
         }
         if self.explain_template.trim().is_empty() {
-            return Err(SoulError::EmptyField("templates.explain_template"));
+            return Err(SoulError::InvalidConfig(
+                "templates.explain_template must not be empty".into(),
+            ));
         }
         Ok(())
     }
@@ -77,10 +83,14 @@ impl SoulConfig {
             )));
         }
         if self.agent_id.trim().is_empty() {
-            return Err(SoulError::EmptyField("agent_id"));
+            return Err(SoulError::InvalidConfig(
+                "agent_id must not be empty".into(),
+            ));
         }
         if self.profile_name.trim().is_empty() {
-            return Err(SoulError::EmptyField("profile_name"));
+            return Err(SoulError::InvalidConfig(
+                "profile_name must not be empty".into(),
+            ));
         }
 
         self.trait_baseline.validate()?;
@@ -93,9 +103,10 @@ impl SoulConfig {
         for heuristic in &self.decision_heuristics {
             heuristic.validate()?;
             if !seen.insert(heuristic.heuristic_id.clone()) {
-                return Err(SoulError::DuplicateHeuristicId(
-                    heuristic.heuristic_id.clone(),
-                ));
+                return Err(SoulError::InvalidConfig(format!(
+                    "duplicate heuristic id `{}`",
+                    heuristic.heuristic_id
+                )));
             }
         }
 
@@ -137,10 +148,14 @@ pub struct SourceConfig {
 impl SourceConfig {
     pub fn validate(&self) -> Result<(), SoulError> {
         if self.identity_workspace.trim().is_empty() {
-            return Err(SoulError::EmptyField("sources.identity_workspace"));
+            return Err(SoulError::InvalidConfig(
+                "sources.identity_workspace must not be empty".into(),
+            ));
         }
         if self.registry_url.trim().is_empty() {
-            return Err(SoulError::EmptyField("sources.registry_url"));
+            return Err(SoulError::InvalidConfig(
+                "sources.registry_url must not be empty".into(),
+            ));
         }
         if !(self.registry_url.starts_with("http://") || self.registry_url.starts_with("https://"))
         {
@@ -150,7 +165,9 @@ impl SourceConfig {
             )));
         }
         if self.registry_agent_id.trim().is_empty() {
-            return Err(SoulError::EmptyField("sources.registry_agent_id"));
+            return Err(SoulError::InvalidConfig(
+                "sources.registry_agent_id must not be empty".into(),
+            ));
         }
         Ok(())
     }

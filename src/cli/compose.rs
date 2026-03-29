@@ -1,7 +1,10 @@
 //! CLI compose command surface.
 
-use crate::domain::{SoulError, SoulTransportError};
+use crate::{
+    app::errors::{SoulTransportError, map_soul_error},
+    domain::SoulError,
+};
 
 pub fn map_compose_error(error: &SoulError) -> SoulTransportError {
-    error.transport_error()
+    map_soul_error(error)
 }

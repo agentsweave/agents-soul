@@ -47,6 +47,8 @@ fn validate_unit_interval(field: &'static str, value: f32) -> Result<(), SoulErr
     if (0.0..=1.0).contains(&value) {
         Ok(())
     } else {
-        Err(SoulError::InvalidTraitValue { field, value })
+        Err(SoulError::InvalidConfig(format!(
+            "trait `{field}` must be within 0.0..=1.0, got {value}",
+        )))
     }
 }

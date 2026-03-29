@@ -4562,3 +4562,35 @@ foundation questions:
 - Do not make cache or templates authoritative.
 - Do not bypass `ComposeMode` resolution in order to “just render something”.
 - Do not let revoked standing fall through to normal rendering.
+
+### 60.11 Validation addendum before runtime work continues
+
+Validation against the bootstrapped repo surfaced a few assumptions that are still too
+loose to treat as settled foundation:
+
+- Missing `soul.toml` is a local config failure, not a baseline fallback. The compose
+  path must not fabricate `SoulConfig::default()` when workspace config is absent.
+- `AppDeps` must be a real dependency boundary, not a wrapper around already-built
+  services. `ComposeService` and the transports must not instantiate readers, config
+  loaders, clocks, hashing helpers, or template loaders ad hoc.
+- Offline compose precedence is frozen one step further:
+  - registry unavailable + identity present -> follow offline policy
+  - registry unavailable + identity absent -> `ComposeMode::BaselineOnly`
+  The cautious offline policy may reduce autonomy when identity truth exists, but it
+  must not pretend there is enough upstream truth to justify a degraded identity-aware
+  mode when identity is absent.
+- Foundation is not complete until one shared transport error matrix exists, even if
+  full CLI/REST/MCP handlers land later. CLI exit codes, REST statuses, and MCP
+  failure codes must all map back to the same `SoulError` buckets.
+- `.soul/context_cache.json` stays optional and disposable. Code may expose a helper
+  path, but the file is not required workspace state and must never become a fallback
+  authority for composition.
+
+Execution gates from this validation pass:
+
+1. `soul-1ip.3` freezes the real `AppDeps` shape and the minimum stable `SoulError`
+   buckets before more orchestration logic lands.
+2. `soul-3l6.1` must encode the exact offline precedence above and include tests for
+   missing registry + missing identity.
+3. The silent default-config fallback must be removed before `soul-29t.*` transport
+   work is allowed to treat compose as production-ready.
