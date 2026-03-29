@@ -73,54 +73,94 @@ fn api_error_response_uses_shared_transport_matrix() {
 }
 
 #[test]
-fn api_mutation_error_responses_use_shared_transport_matrix() {
-    let error = SoulError::Storage("db locked".into());
-    let mapped = map_soul_error(&error);
+fn api_read_error_responses_cover_major_soul_error_categories() {
+    for error in major_transport_errors() {
+        let mapped = map_soul_error(&error);
+        let response = api::compose::compose_error_response(&error);
 
-    let interaction_response = api::interactions::record_error_response(&error);
-    assert_eq!(interaction_response.status, mapped.http_status);
-    assert_eq!(interaction_response.body.error.code, mapped.code);
-    assert_eq!(interaction_response.body.error.category, mapped.category);
-    assert_eq!(interaction_response.body.error.message, mapped.message);
-    assert_eq!(
-        interaction_response.body.error.compose_mode_hint,
-        mapped.compose_mode_hint
-    );
-
-    let reset_response = api::reset::reset_error_response(&error);
-    assert_eq!(reset_response.status, mapped.http_status);
-    assert_eq!(reset_response.body.error.code, mapped.code);
-    assert_eq!(reset_response.body.error.category, mapped.category);
-    assert_eq!(reset_response.body.error.message, mapped.message);
-    assert_eq!(
-        reset_response.body.error.compose_mode_hint,
-        mapped.compose_mode_hint
-    );
+        assert_eq!(response.status, mapped.http_status);
+        assert_eq!(response.body.error.code, mapped.code);
+        assert_eq!(response.body.error.category, mapped.category);
+        assert_eq!(response.body.error.message, mapped.message);
+        assert_eq!(
+            response.body.error.compose_mode_hint,
+            mapped.compose_mode_hint
+        );
+    }
 }
 
 #[test]
-fn mcp_error_response_uses_shared_transport_matrix() {
-    let error = SoulError::UpstreamInvalid {
-        input: "registry-verification",
-        message: "bad payload".into(),
-    };
-    let mapped = map_soul_error(&error);
-    let tool_error = mcp::tools::compose_tool_error(&error);
+fn api_mutation_error_responses_cover_major_soul_error_categories() {
+    for error in major_transport_errors() {
+        let mapped = map_soul_error(&error);
 
-    assert_eq!(tool_error.code, mapped.mcp_error_name);
-    assert_eq!(tool_error.message, mapped.message);
-    assert_eq!(tool_error.data.error_code, mapped.mcp_error_code);
-    assert_eq!(tool_error.data.category, mapped.category);
-    assert_eq!(tool_error.data.http_status, mapped.http_status);
-    assert_eq!(tool_error.data.cli_exit_code, mapped.cli_exit_code);
+        let interaction_response = api::interactions::record_error_response(&error);
+        assert_eq!(interaction_response.status, mapped.http_status);
+        assert_eq!(interaction_response.body.error.code, mapped.code);
+        assert_eq!(interaction_response.body.error.category, mapped.category);
+        assert_eq!(interaction_response.body.error.message, mapped.message);
+        assert_eq!(
+            interaction_response.body.error.compose_mode_hint,
+            mapped.compose_mode_hint
+        );
+
+        let reset_response = api::reset::reset_error_response(&error);
+        assert_eq!(reset_response.status, mapped.http_status);
+        assert_eq!(reset_response.body.error.code, mapped.code);
+        assert_eq!(reset_response.body.error.category, mapped.category);
+        assert_eq!(reset_response.body.error.message, mapped.message);
+        assert_eq!(
+            reset_response.body.error.compose_mode_hint,
+            mapped.compose_mode_hint
+        );
+    }
 }
 
 #[test]
-fn cli_error_mapping_uses_shared_exit_codes() {
-    let error = SoulError::Storage("db locked".into());
-    let mapped = cli::compose::map_compose_error(&error);
+fn mcp_error_responses_cover_major_soul_error_categories() {
+    for error in major_transport_errors() {
+        let mapped = map_soul_error(&error);
+        let tool_error = mcp::tools::compose_tool_error(&error);
 
-    assert_eq!(mapped.code, "storage-failure");
-    assert_eq!(mapped.cli_exit_code, 6);
-    assert_eq!(mapped.exit_code(), std::process::ExitCode::from(6));
+        assert_eq!(tool_error.code, mapped.mcp_error_name);
+        assert_eq!(tool_error.message, mapped.message);
+        assert_eq!(tool_error.data.error_code, mapped.mcp_error_code);
+        assert_eq!(tool_error.data.category, mapped.category);
+        assert_eq!(tool_error.data.http_status, mapped.http_status);
+        assert_eq!(tool_error.data.cli_exit_code, mapped.cli_exit_code);
+        assert_eq!(tool_error.data.compose_mode_hint, mapped.compose_mode_hint);
+    }
+}
+
+#[test]
+fn cli_error_mapping_uses_shared_exit_codes_for_major_categories() {
+    for error in major_transport_errors() {
+        let mapped = map_soul_error(&error);
+        let cli_error = cli::compose::map_compose_error(&error);
+
+        assert_eq!(cli_error.code, mapped.code);
+        assert_eq!(cli_error.cli_exit_code, mapped.cli_exit_code);
+        assert_eq!(
+            cli_error.exit_code(),
+            std::process::ExitCode::from(mapped.cli_exit_code)
+        );
+    }
+}
+
+fn major_transport_errors() -> Vec<SoulError> {
+    vec![
+        SoulError::Validation("bad request".into()),
+        SoulError::RegistryUnavailable,
+        SoulError::RevokedStanding,
+        SoulError::InvalidConfig("missing soul.toml".into()),
+        SoulError::Storage("db locked".into()),
+        SoulError::UpstreamInvalid {
+            input: "registry-verification",
+            message: "bad payload".into(),
+        },
+        SoulError::TemplateRender {
+            template: "prompt-prefix",
+            message: "missing variable".into(),
+        },
+    ]
 }
