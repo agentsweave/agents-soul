@@ -154,7 +154,7 @@ mod tests {
                 "agents-soul",
                 "configure",
                 "--workspace",
-                workspace.to_str().expect("workspace path should be utf-8"),
+                workspace.to_string_lossy().as_ref(),
                 "--trait",
                 "verbosity",
                 "0.8",
@@ -164,7 +164,9 @@ mod tests {
         )?;
 
         let updated = crate::app::config::load_soul_config(&workspace)?;
-        assert_eq!(updated.trait_baseline.verbosity, 0.8);
+        if (updated.trait_baseline.verbosity - 0.8).abs() > f32::EPSILON {
+            return Err("verbosity trait was not updated".into());
+        }
         cleanup_workspace(&workspace)?;
         Ok(())
     }
@@ -180,7 +182,7 @@ mod tests {
                 "agents-soul",
                 "record",
                 "--workspace",
-                workspace.to_str().expect("workspace path should be utf-8"),
+                workspace.to_string_lossy().as_ref(),
                 "--interaction-type",
                 "review",
                 "--outcome",
@@ -190,11 +192,12 @@ mod tests {
             &AppDeps::default(),
         )?;
 
-        assert!(
-            WorkspacePaths::new(&workspace)
-                .adaptation_db_path()
-                .is_file()
-        );
+        if !WorkspacePaths::new(&workspace)
+            .adaptation_db_path()
+            .is_file()
+        {
+            return Err("adaptation database was not created".into());
+        }
         cleanup_workspace(&workspace)?;
         Ok(())
     }
@@ -210,7 +213,7 @@ mod tests {
                 "agents-soul",
                 "reset",
                 "--workspace",
-                workspace.to_str().expect("workspace path should be utf-8"),
+                workspace.to_string_lossy().as_ref(),
                 "--scope",
                 "all",
             ],
@@ -224,14 +227,16 @@ mod tests {
             rusqlite::params!["agent.alpha", scope_name(ResetScope::All)],
             |row| row.get(0),
         )?;
-        assert_eq!(reset_count, 1);
+        if reset_count != 1 {
+            return Err(format!("expected one reset record, found {reset_count}").into());
+        }
 
         cleanup_workspace(&workspace)?;
         Ok(())
     }
 
     #[test]
-    fn configure_rejects_unknown_traits() {
+    fn configure_rejects_unknown_traits() -> Result<(), Box<dyn Error>> {
         let result = run_with_args(
             vec![
                 "agents-soul",
@@ -251,7 +256,12 @@ mod tests {
             Err(other) => format!("expected validation error, got {other}"),
             Ok(()) => "expected validation error, got success".to_owned(),
         };
-        assert!(message.contains("unsupported trait `curiosity`"));
+        if !message.contains("unsupported trait `curiosity`") {
+            return Err(
+                format!("validation message did not mention unsupported trait: {message}").into(),
+            );
+        }
+        Ok(())
     }
 
     fn scope_name(scope: ResetScope) -> &'static str {
@@ -266,7 +276,7 @@ mod tests {
     fn test_workspace(label: &str) -> PathBuf {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("system time should be after epoch")
+            .unwrap_or_default()
             .as_nanos();
         std::env::temp_dir().join(format!("agents-soul-{label}-{suffix}"))
     }
