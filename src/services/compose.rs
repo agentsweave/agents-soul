@@ -113,6 +113,7 @@ impl ComposeService {
     ) -> Result<BehavioralContext, ServiceError> {
         let profile_name = normalized.profile_name.clone();
         let prompt_prefix = deps.render_prompt_prefix(
+            &normalized.soul_config.templates.prompt_prefix_template,
             ComposeMode::FailClosed,
             &profile_name,
             normalized.soul_config.limits.max_prompt_prefix_chars,
@@ -164,6 +165,7 @@ impl ComposeService {
     ) -> Result<BehavioralContext, ServiceError> {
         let profile_name = normalized.profile_name.clone();
         let prompt_prefix = deps.render_prompt_prefix(
+            &normalized.soul_config.templates.prompt_prefix_template,
             compose_mode,
             &profile_name,
             normalized.soul_config.limits.max_prompt_prefix_chars,
@@ -291,11 +293,14 @@ mod tests {
     impl PromptTemplateRenderer for StubRenderer {
         fn render_prompt_prefix(
             &self,
+            template_name: &str,
             compose_mode: ComposeMode,
             profile_name: &str,
             max_chars: usize,
         ) -> Result<String, SoulError> {
-            Ok(format!("deps:{compose_mode:?}:{profile_name}:{max_chars}"))
+            Ok(format!(
+                "deps:{template_name}:{compose_mode:?}:{profile_name}:{max_chars}"
+            ))
         }
     }
 
@@ -388,7 +393,9 @@ mod tests {
         assert_eq!(
             context.communication_rules,
             vec![
-                "Avoid claiming identity-derived commitments or relationship context that was not loaded."
+                "Call out degraded or missing upstream context before acting on uncertain assumptions."
+                    .to_owned(),
+                "Reduce autonomous initiative until identity and registry inputs are healthy again."
                     .to_owned(),
                 "Use a professional-direct register.".to_owned(),
                 "Keep responses within a long paragraph budget.".to_owned(),
@@ -401,7 +408,7 @@ mod tests {
         assert_eq!(
             context.decision_rules,
             vec![
-                "Do not infer relationship-specific obligations that are absent from the loaded baseline inputs."
+                "Prefer reversible actions and verification steps while upstream context is degraded."
                     .to_owned(),
                 "Use adapted risk review.".to_owned()
             ]
@@ -481,7 +488,10 @@ mod tests {
             },
         )?;
 
-        assert_eq!(context.system_prompt_prefix, "deps:Normal:Alpha:64");
+        assert_eq!(
+            context.system_prompt_prefix,
+            "deps:prompt-prefix:Normal:Alpha:64"
+        );
         assert_eq!(context.adaptive_notes, vec!["injected note".to_owned()]);
         assert_eq!(context.provenance.config_hash, "cfg_deps");
         assert_eq!(context.provenance.adaptation_hash, "adp_deps");
@@ -697,10 +707,7 @@ mod tests {
         )?;
 
         assert_eq!(context.profile_name, "Alpha");
-        assert_eq!(
-            context.status_summary.compose_mode,
-            ComposeMode::BaselineOnly
-        );
+        assert_eq!(context.status_summary.compose_mode, ComposeMode::Degraded);
         assert!(!context.status_summary.identity_loaded);
         assert!(!context.status_summary.registry_verified);
         assert!(context.adaptive_notes.is_empty());

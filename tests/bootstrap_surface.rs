@@ -7,8 +7,9 @@ use std::{
 use agents_soul::app::deps::ComposeClock;
 use agents_soul::domain::{
     AdaptationState, CURRENT_SCHEMA_VERSION, ComposeRequest, InputProvenance, InputSourceKind,
-    NormalizedInputs, RecoveryState, RegistryStatus, SessionIdentitySnapshot, SoulConfig,
-    SoulError, SourceConfig, VerificationResult,
+    NormalizedIdentityInputs, NormalizedInputs, NormalizedRegistryInputs, NormalizedUpstreamInputs,
+    RecoveryState, RegistryStatus, SessionIdentitySnapshot, SoulConfig, SoulError, SourceConfig,
+    VerificationResult,
 };
 use agents_soul::sources::{
     cache::{CachedInputs, write_cached_inputs},
@@ -81,12 +82,13 @@ struct FixedRenderer;
 impl PromptTemplateRenderer for FixedRenderer {
     fn render_prompt_prefix(
         &self,
+        template_name: &str,
         compose_mode: ComposeMode,
         profile_name: &str,
         max_chars: usize,
     ) -> Result<String, SoulError> {
         Ok(format!(
-            "runtime:{compose_mode:?}:{profile_name}:{max_chars}"
+            "runtime:{template_name}:{compose_mode:?}:{profile_name}:{max_chars}"
         ))
     }
 }
@@ -131,6 +133,19 @@ fn runtime_dispatch_preserves_injected_config_and_deps() -> Result<(), SoulError
             agent_id: "alpha".to_owned(),
             profile_name: "Alpha".to_owned(),
             compose_mode_hint: Some(ComposeMode::Normal),
+            upstream: NormalizedUpstreamInputs {
+                identity: NormalizedIdentityInputs {
+                    snapshot: None,
+                    recovery_state: None,
+                    provenance: InputProvenance::unavailable("not loaded"),
+                },
+                registry: NormalizedRegistryInputs {
+                    verification: None,
+                    verification_provenance: InputProvenance::unavailable("not loaded"),
+                    reputation: None,
+                    reputation_provenance: InputProvenance::unavailable("not loaded"),
+                },
+            },
             identity_snapshot: None,
             identity_recovery_state: None,
             identity_provenance: InputProvenance::unavailable("not loaded"),
@@ -152,8 +167,13 @@ fn runtime_dispatch_preserves_injected_config_and_deps() -> Result<(), SoulError
                 .expect("fixed timestamp should be valid")
         );
         assert_eq!(
-            seen_deps.render_prompt_prefix(ComposeMode::Restricted, "Alpha", 32)?,
-            "runtime:Restricted:Alpha:32"
+            seen_deps.render_prompt_prefix(
+                "prompt-prefix",
+                ComposeMode::Restricted,
+                "Alpha",
+                32
+            )?,
+            "runtime:prompt-prefix:Restricted:Alpha:32"
         );
         assert_eq!(
             seen_deps
@@ -297,6 +317,42 @@ fn bootstrap_registry_reader_prefers_explicit_verification_over_live_and_cache()
     assert_eq!(verification.standing_level.as_deref(), Some("explicit"));
 
     cleanup_workspace(&workspace)?;
+    Ok(())
+}
+
+#[test]
+fn bootstrap_utility_helpers_are_deterministic() -> Result<(), SoulError> {
+    let first_hash = agents_soul::app::hash::stable_content_hash("agents-soul");
+    let second_hash = agents_soul::app::hash::stable_content_hash("agents-soul");
+    assert_eq!(first_hash, second_hash);
+    assert_eq!(first_hash.len(), 64);
+
+    let sorted = agents_soul::app::hash::sorted_dedup_strings(vec![
+        "zeta".to_owned(),
+        "alpha".to_owned(),
+        "zeta".to_owned(),
+        "beta".to_owned(),
+    ]);
+    assert_eq!(sorted, vec!["alpha", "beta", "zeta"]);
+
+    let hasher = agents_soul::services::provenance::StableProvenanceHasher;
+    let snapshot = SessionIdentitySnapshot {
+        agent_id: "alpha".to_owned(),
+        display_name: Some("Alpha".to_owned()),
+        recovery_state: RecoveryState::Healthy,
+        active_commitments: vec!["commit-a".to_owned(), "commit-b".to_owned()],
+        durable_preferences: vec!["prefer-terse".to_owned()],
+        relationship_markers: vec!["trusted-reviewer".to_owned()],
+        facts: vec!["fact-1".to_owned()],
+        warnings: vec!["warning-1".to_owned()],
+        fingerprint: None,
+    };
+
+    let first_fingerprint = hasher.identity_fingerprint(&snapshot)?;
+    let second_fingerprint = hasher.identity_fingerprint(&snapshot)?;
+    assert_eq!(first_fingerprint, second_fingerprint);
+    assert!(first_fingerprint.starts_with("id_"));
+
     Ok(())
 }
 

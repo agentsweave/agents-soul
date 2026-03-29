@@ -91,7 +91,7 @@ impl AppDeps {
             sources,
             config_loader: Arc::new(WorkspaceSoulConfigLoader),
             adaptation_loader: Arc::new(WorkspaceAdaptationStateLoader),
-            template_renderer: Arc::new(TemplateService),
+            template_renderer: Arc::new(TemplateService::default()),
             clock: Arc::new(SystemClock),
             provenance_hasher: Arc::new(StableProvenanceHasher),
         }
@@ -211,12 +211,17 @@ impl AppDeps {
 
     pub fn render_prompt_prefix(
         &self,
+        template_name: &str,
         compose_mode: ComposeMode,
         profile_name: &str,
         max_chars: usize,
     ) -> Result<String, SoulError> {
-        self.template_renderer
-            .render_prompt_prefix(compose_mode, profile_name, max_chars)
+        self.template_renderer.render_prompt_prefix(
+            template_name,
+            compose_mode,
+            profile_name,
+            max_chars,
+        )
     }
 
     pub fn now(&self) -> DateTime<Utc> {

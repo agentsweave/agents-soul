@@ -3,6 +3,8 @@ use crate::domain::{
     StatusSummary,
 };
 
+use super::templates::render_builtin_prompt_prefix;
+
 #[derive(Debug, Clone, Default)]
 pub struct ComposeModeService;
 
@@ -20,14 +22,16 @@ impl ComposeModeService {
     ) -> StatusSummary {
         StatusSummary {
             compose_mode,
-            identity_loaded: normalized.identity_snapshot.is_some(),
-            registry_verified: normalized.verification_result.is_some(),
+            identity_loaded: normalized.upstream.identity.snapshot.is_some(),
+            registry_verified: normalized.upstream.registry.verification.is_some(),
             registry_status: normalized
-                .verification_result
+                .upstream
+                .registry
+                .verification
                 .as_ref()
                 .map(|verification| verification.status),
-            reputation_loaded: normalized.reputation_summary.is_some(),
-            recovery_state: normalized.identity_recovery_state,
+            reputation_loaded: normalized.upstream.registry.reputation.is_some(),
+            recovery_state: normalized.upstream.identity.recovery_state,
         }
     }
 
@@ -37,49 +41,21 @@ impl ComposeModeService {
         profile_name: &str,
         max_chars: usize,
     ) -> String {
-        let prefix = match compose_mode {
-            ComposeMode::FailClosed => [
-                "Identity revoked. Do not continue normal autonomous operation.",
-                "Do not present yourself as an active verified agent.",
-                "State the problem plainly.",
-                "Ask for operator intervention.",
-                "Do not take on new commitments.",
-                "Do not claim registry validity.",
-            ]
-            .join("\n"),
-            ComposeMode::Restricted => [
-                "Identity suspended. Operate in restricted advisory mode only.",
-                "Lower initiative.",
-                "Avoid high-risk actions.",
-                "Surface uncertainty clearly.",
-                "Request operator confirmation before consequential changes.",
-            ]
-            .join("\n"),
-            ComposeMode::Degraded => {
-                "Operate cautiously. Upstream identity or registry inputs are degraded, so autonomy and confidence must be reduced."
-                    .to_owned()
-            }
-            ComposeMode::BaselineOnly => format!(
-                "Use the baseline soul profile for {profile_name}. Do not invent identity-derived commitments or relationship context that was not loaded."
-            ),
-            ComposeMode::Normal => {
-                format!("You are {profile_name}. Follow the configured soul profile.")
-            }
-        };
-
-        truncate(prefix, max_chars)
+        render_builtin_prompt_prefix(compose_mode, profile_name, max_chars)
     }
 }
 
 fn derive_mode(normalized: &NormalizedInputs) -> ComposeMode {
     match normalized
-        .verification_result
+        .upstream
+        .registry
+        .verification
         .as_ref()
         .map(|verification| verification.status)
     {
         Some(RegistryStatus::Revoked) => ComposeMode::FailClosed,
         Some(RegistryStatus::Suspended) => ComposeMode::Restricted,
-        Some(_) => match normalized.identity_recovery_state {
+        Some(_) => match normalized.upstream.identity.recovery_state {
             Some(RecoveryState::Broken)
             | Some(RecoveryState::Degraded)
             | Some(RecoveryState::Recovering) => ComposeMode::Degraded,
@@ -87,7 +63,7 @@ fn derive_mode(normalized: &NormalizedInputs) -> ComposeMode {
             None => ComposeMode::BaselineOnly,
         },
         None => {
-            if normalized.identity_recovery_state.is_none() {
+            if normalized.upstream.identity.recovery_state.is_none() {
                 ComposeMode::BaselineOnly
             } else {
                 match normalized.soul_config.limits.offline_registry_behavior {
@@ -98,15 +74,6 @@ fn derive_mode(normalized: &NormalizedInputs) -> ComposeMode {
             }
         }
     }
-}
-
-fn truncate(mut value: String, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value;
-    }
-
-    value = value.chars().take(max_chars).collect();
-    value.trim_end().to_owned()
 }
 
 #[cfg(test)]
