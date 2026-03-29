@@ -11,7 +11,7 @@ use crate::{
         relationships::RelationshipsService, warnings::WarningService,
     },
     sources::{
-        cache::{CachedInputs, write_cached_inputs},
+        cache::{CachedFreshness, CachedInputs, write_cached_inputs},
         normalize::normalize_inputs,
     },
 };
@@ -53,16 +53,37 @@ impl ComposeService {
             identity_selection.provenance.source,
             verification_selection.provenance.source,
             reputation_selection.provenance.source,
-        ) && let Err(error) = write_cached_inputs(
-            &request,
-            &CachedInputs {
-                cache_key: None,
-                identity_snapshot: identity_snapshot.clone(),
-                verification_result: verification_result.clone(),
-                reputation_summary: reputation_summary.clone(),
-            },
         ) {
-            reader_warnings.push(cache_write_warning(&request, error));
+            let freshness = Some(CachedFreshness {
+                config_hash: Some(deps.provenance_hasher().config_hash(&config)?),
+                adaptation_hash: Some(
+                    deps.provenance_hasher()
+                        .adaptation_hash(&effective_overrides.adaptation_state)?,
+                ),
+                identity_fingerprint: identity_snapshot.as_ref().map(|snapshot| {
+                    snapshot.fingerprint.clone().unwrap_or_else(|| {
+                        deps.provenance_hasher()
+                            .identity_fingerprint(snapshot)
+                            .unwrap_or_default()
+                    })
+                }),
+                registry_verification_at: verification_result
+                    .as_ref()
+                    .and_then(|verification| verification.verified_at),
+            });
+
+            if let Err(error) = write_cached_inputs(
+                &request,
+                &CachedInputs {
+                    cache_key: None,
+                    freshness,
+                    identity_snapshot: identity_snapshot.clone(),
+                    verification_result: verification_result.clone(),
+                    reputation_summary: reputation_summary.clone(),
+                },
+            ) {
+                reader_warnings.push(cache_write_warning(&request, error));
+            }
         }
 
         let normalized = normalize_inputs(
@@ -154,7 +175,32 @@ impl ComposeService {
         normalized: NormalizedInputs,
         status_summary: StatusSummary,
     ) -> Result<BehavioralContext, ServiceError> {
-        self.render_context(deps, normalized, status_summary, ComposeMode::Restricted)
+        let profile_name = normalized.profile_name.clone();
+        let prompt_prefix = deps.render_prompt_prefix(
+            &normalized.soul_config.templates.prompt_prefix_template,
+            ComposeMode::Restricted,
+            &profile_name,
+            normalized.soul_config.limits.max_prompt_prefix_chars,
+        )?;
+        let restricted_inputs = restricted_inputs(&normalized);
+
+        Ok(BehavioralContext {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            agent_id: normalized.agent_id.clone(),
+            profile_name,
+            status_summary,
+            baseline_trait_profile: EffectiveProfileService.derive_baseline(&restricted_inputs),
+            trait_profile: EffectiveProfileService
+                .derive(&restricted_inputs, ComposeMode::Restricted),
+            communication_rules: restricted_communication_rules(&restricted_inputs),
+            decision_rules: restricted_decision_rules(&restricted_inputs),
+            active_commitments: restricted_commitments(&restricted_inputs),
+            relationship_context: restricted_relationships(&restricted_inputs),
+            adaptive_notes: Vec::new(),
+            warnings: WarningService.derive(&normalized, ComposeMode::Restricted),
+            system_prompt_prefix: prompt_prefix,
+            provenance: ProvenanceService.build(deps.provenance_hasher(), &normalized)?,
+        })
     }
 
     fn render_context(
@@ -196,6 +242,49 @@ fn fail_closed_inputs(normalized: &NormalizedInputs) -> NormalizedInputs {
     fail_closed.adaptation_state = Default::default();
     fail_closed.soul_config.adaptation.enabled = false;
     fail_closed
+}
+
+fn restricted_inputs(normalized: &NormalizedInputs) -> NormalizedInputs {
+    let mut restricted = normalized.clone();
+    restricted.adaptation_state.notes.clear();
+    restricted
+}
+
+fn restricted_communication_rules(normalized: &NormalizedInputs) -> Vec<String> {
+    let mut rules = vec![
+        "State the restricted mode plainly before proposing next steps.".to_owned(),
+        "Keep scope narrow and avoid presenting risky follow-through as the default.".to_owned(),
+    ];
+    rules.extend(CommunicationRulesService.derive(normalized, ComposeMode::Restricted));
+    rules
+}
+
+fn restricted_decision_rules(normalized: &NormalizedInputs) -> Vec<String> {
+    let mut rules = vec![
+        "Do not take risky, stateful, or autonomy-expanding actions without operator confirmation."
+            .to_owned(),
+        "Keep work reversible and bounded while registry standing remains suspended.".to_owned(),
+    ];
+    rules.extend(DecisionRulesService.derive(normalized, ComposeMode::Restricted));
+    rules
+}
+
+fn restricted_commitments(normalized: &NormalizedInputs) -> Vec<String> {
+    let mut commitments = vec![
+        "Restricted mode is active; loaded commitments stay constrained until the operator confirms scope."
+            .to_owned(),
+    ];
+    commitments.extend(CommitmentsService.derive(normalized, ComposeMode::Restricted));
+    commitments
+}
+
+fn restricted_relationships(normalized: &NormalizedInputs) -> Vec<String> {
+    let mut relationships = vec![
+        "Restricted mode is active; relationship markers provide context but do not authorize autonomous escalation."
+            .to_owned(),
+    ];
+    relationships.extend(RelationshipsService.derive(normalized, ComposeMode::Restricted));
+    relationships
 }
 
 fn should_refresh_context_cache(
@@ -592,6 +681,103 @@ mod tests {
                 .warnings
                 .iter()
                 .any(|warning| warning.code == "registry_revoked")
+        );
+    }
+
+    #[test]
+    fn suspended_input_uses_explicit_restricted_context_builder() {
+        let request = ComposeRequest::new("agent.alpha", "session.alpha");
+        let mut config = SoulConfig {
+            agent_id: "agent.alpha".to_owned(),
+            profile_name: "Alpha".to_owned(),
+            ..SoulConfig::default()
+        };
+        config.adaptation.enabled = true;
+
+        let normalized = normalize_inputs(
+            &request,
+            BehaviorInputs {
+                soul_config: config,
+                identity_snapshot: Some(SessionIdentitySnapshot {
+                    agent_id: "agent.alpha".to_owned(),
+                    display_name: Some("Alpha".to_owned()),
+                    recovery_state: RecoveryState::Healthy,
+                    active_commitments: vec!["protect the operator".to_owned()],
+                    durable_preferences: Vec::new(),
+                    relationship_markers: vec![RelationshipMarker {
+                        subject: "operator".to_owned(),
+                        marker: "trusted".to_owned(),
+                        note: Some("primary owner".to_owned()),
+                    }],
+                    facts: Vec::new(),
+                    warnings: Vec::new(),
+                    fingerprint: None,
+                }),
+                verification_result: Some(VerificationResult {
+                    status: RegistryStatus::Suspended,
+                    standing_level: Some("suspended".to_owned()),
+                    reason_code: Some("policy".to_owned()),
+                    verified_at: Some(Utc::now()),
+                }),
+                adaptation_state: AdaptationState {
+                    notes: vec!["adapted note".to_owned()],
+                    ..AdaptationState::default()
+                },
+                generated_at: Utc::now(),
+                ..BehaviorInputs::default()
+            },
+        )
+        .expect("normalized inputs");
+
+        let deps = crate::app::deps::AppDeps::default();
+        let context = ComposeService
+            .build_context(&deps, normalized)
+            .expect("context should build");
+
+        assert_eq!(context.status_summary.compose_mode, ComposeMode::Restricted);
+        assert!(
+            context
+                .system_prompt_prefix
+                .starts_with("Identity suspended.")
+        );
+        assert!(
+            context
+                .communication_rules
+                .iter()
+                .any(|rule| rule.contains("restricted mode plainly"))
+        );
+        assert!(
+            context
+                .decision_rules
+                .iter()
+                .any(|rule| rule.contains("autonomy-expanding"))
+        );
+        assert!(
+            context
+                .active_commitments
+                .iter()
+                .any(|item| item.contains("loaded commitments stay constrained"))
+        );
+        assert!(
+            context
+                .relationship_context
+                .iter()
+                .any(|item| item.contains("relationship markers provide context"))
+        );
+        assert!(context.adaptive_notes.is_empty());
+        assert!(context.trait_profile.initiative <= 0.35);
+        assert!(context.trait_profile.risk_tolerance <= 0.12);
+        assert!(
+            context
+                .warnings
+                .iter()
+                .any(|warning| warning.code == "registry_suspended")
+        );
+        assert!(
+            context
+                .warnings
+                .iter()
+                .any(|warning| warning.code == "compose_restricted")
         );
     }
 
