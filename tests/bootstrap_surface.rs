@@ -1,13 +1,22 @@
-use std::env;
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use agents_soul::app::deps::ComposeClock;
 use agents_soul::domain::{
-    AdaptationState, CURRENT_SCHEMA_VERSION, ComposeRequest, InputProvenance, NormalizedInputs,
-    SessionIdentitySnapshot, SoulConfig,
+    AdaptationState, CURRENT_SCHEMA_VERSION, ComposeRequest, InputProvenance, InputSourceKind,
+    NormalizedInputs, RecoveryState, RegistryStatus, SessionIdentitySnapshot, SoulConfig,
+    SoulError, SourceConfig, VerificationResult,
+};
+use agents_soul::sources::{
+    cache::{CachedInputs, write_cached_inputs},
+    identity::IdentityReader,
+    registry::RegistryReader,
 };
 use agents_soul::{
-    BehavioralContext, ComposeMode, CrateLayer, SoulDependencies, SoulError, SoulErrorCategory,
-    SoulRuntime,
+    BehavioralContext, ComposeMode, CrateLayer, SoulDependencies, SoulErrorCategory, SoulRuntime,
     app::config::ApplicationConfig,
     core_layers, crate_layout,
     services::{provenance::ProvenanceHasher, templates::PromptTemplateRenderer},
@@ -123,6 +132,7 @@ fn runtime_dispatch_preserves_injected_config_and_deps() -> Result<(), SoulError
             profile_name: "Alpha".to_owned(),
             compose_mode_hint: Some(ComposeMode::Normal),
             identity_snapshot: None,
+            identity_recovery_state: None,
             identity_provenance: InputProvenance::unavailable("not loaded"),
             verification_result: None,
             verification_provenance: InputProvenance::unavailable("not loaded"),
@@ -163,4 +173,148 @@ fn runtime_dispatch_preserves_injected_config_and_deps() -> Result<(), SoulError
         );
         Ok(())
     })
+}
+
+#[test]
+fn bootstrap_identity_reader_prefers_live_identify_signals_over_live_snapshot_and_cache()
+-> Result<(), SoulError> {
+    let workspace = test_workspace("bootstrap-identify-precedence");
+    let identity_workspace = workspace.join("identity");
+    fs::create_dir_all(identity_workspace.join(".soul")).map_err(io_to_soul)?;
+    fs::create_dir_all(workspace.join(".soul")).map_err(io_to_soul)?;
+
+    fs::write(
+        identity_workspace.join("session_identity_snapshot.json"),
+        r#"{
+            "agent_id":"alpha",
+            "recovery_state":"healthy",
+            "active_commitments":["live-snapshot"]
+        }"#,
+    )
+    .map_err(io_to_soul)?;
+    fs::write(
+        identity_workspace.join("agents_identify.json"),
+        r#"{
+            "recovery_state":"degraded"
+        }"#,
+    )
+    .map_err(io_to_soul)?;
+
+    let mut request = ComposeRequest::new("alpha", "session-1");
+    request.workspace_id = workspace.display().to_string();
+    write_cached_inputs(
+        &request,
+        &CachedInputs {
+            cache_key: None,
+            identity_snapshot: Some(SessionIdentitySnapshot {
+                agent_id: "alpha".to_owned(),
+                display_name: Some("Alpha".to_owned()),
+                recovery_state: RecoveryState::Healthy,
+                active_commitments: vec!["cache".to_owned()],
+                durable_preferences: Vec::new(),
+                relationship_markers: Vec::new(),
+                facts: Vec::new(),
+                warnings: Vec::new(),
+                fingerprint: None,
+            }),
+            verification_result: None,
+            reputation_summary: None,
+        },
+    )?;
+
+    let config = SoulConfig {
+        agent_id: "alpha".to_owned(),
+        profile_name: "Alpha".to_owned(),
+        sources: SourceConfig {
+            identity_workspace: identity_workspace.display().to_string(),
+            ..SoulConfig::default().sources
+        },
+        ..SoulConfig::default()
+    };
+
+    let selection = IdentityReader.load(&request, &config)?;
+    let signals = selection.value.expect("identify signals should load");
+
+    assert_eq!(selection.provenance.source, InputSourceKind::Live);
+    assert_eq!(signals.recovery_state, Some(RecoveryState::Degraded));
+    assert!(signals.snapshot.is_none());
+
+    cleanup_workspace(&workspace)?;
+    Ok(())
+}
+
+#[test]
+fn bootstrap_registry_reader_prefers_explicit_verification_over_live_and_cache()
+-> Result<(), SoulError> {
+    let workspace = test_workspace("bootstrap-registry-precedence");
+    fs::create_dir_all(workspace.join(".soul")).map_err(io_to_soul)?;
+
+    fs::write(
+        workspace.join("registry_verification.json"),
+        r#"{
+            "status":"suspended",
+            "standing_level":"live"
+        }"#,
+    )
+    .map_err(io_to_soul)?;
+    fs::write(
+        workspace.join("explicit_verification.json"),
+        r#"{
+            "status":"active",
+            "standing_level":"explicit"
+        }"#,
+    )
+    .map_err(io_to_soul)?;
+
+    let mut request = ComposeRequest::new("alpha", "session-1");
+    request.workspace_id = workspace.display().to_string();
+    request.registry_verification_path = Some(
+        workspace
+            .join("explicit_verification.json")
+            .display()
+            .to_string(),
+    );
+    write_cached_inputs(
+        &request,
+        &CachedInputs {
+            cache_key: None,
+            identity_snapshot: None,
+            verification_result: Some(VerificationResult {
+                status: RegistryStatus::Revoked,
+                standing_level: Some("cache".to_owned()),
+                reason_code: None,
+                verified_at: None,
+            }),
+            reputation_summary: None,
+        },
+    )?;
+
+    let selection = RegistryReader::default().load_verification(&request)?;
+    let verification = selection.value.expect("verification should load");
+
+    assert_eq!(selection.provenance.source, InputSourceKind::Explicit);
+    assert_eq!(verification.status, RegistryStatus::Active);
+    assert_eq!(verification.standing_level.as_deref(), Some("explicit"));
+
+    cleanup_workspace(&workspace)?;
+    Ok(())
+}
+
+fn test_workspace(label: &str) -> PathBuf {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!("agents-soul-{label}-{suffix}"))
+}
+
+fn cleanup_workspace(workspace: &Path) -> Result<(), SoulError> {
+    if workspace.exists() {
+        fs::remove_dir_all(workspace).map_err(io_to_soul)?;
+    }
+    Ok(())
+}
+
+fn io_to_soul(error: std::io::Error) -> SoulError {
+    SoulError::Storage(error.to_string())
 }

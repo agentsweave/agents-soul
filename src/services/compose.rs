@@ -388,9 +388,7 @@ mod tests {
         assert_eq!(
             context.communication_rules,
             vec![
-                "Call out degraded or missing upstream context before acting on uncertain assumptions."
-                    .to_owned(),
-                "Reduce autonomous initiative until identity and registry inputs are healthy again."
+                "Avoid claiming identity-derived commitments or relationship context that was not loaded."
                     .to_owned(),
                 "Use a professional-direct register.".to_owned(),
                 "Keep responses within a long paragraph budget.".to_owned(),
@@ -403,7 +401,7 @@ mod tests {
         assert_eq!(
             context.decision_rules,
             vec![
-                "Prefer reversible actions and verification steps while upstream context is degraded."
+                "Do not infer relationship-specific obligations that are absent from the loaded baseline inputs."
                     .to_owned(),
                 "Use adapted risk review.".to_owned()
             ]
@@ -699,7 +697,10 @@ mod tests {
         )?;
 
         assert_eq!(context.profile_name, "Alpha");
-        assert_eq!(context.status_summary.compose_mode, ComposeMode::Degraded);
+        assert_eq!(
+            context.status_summary.compose_mode,
+            ComposeMode::BaselineOnly
+        );
         assert!(!context.status_summary.identity_loaded);
         assert!(!context.status_summary.registry_verified);
         assert!(context.adaptive_notes.is_empty());

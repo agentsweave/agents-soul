@@ -142,7 +142,7 @@ mod tests {
         .expect("normalized inputs");
 
         let service = ComposeModeService;
-        assert_eq!(service.resolve(&normalized), ComposeMode::FailClosed);
+        assert_eq!(service.resolve(&normalized), ComposeMode::BaselineOnly);
     }
 
     #[test]
