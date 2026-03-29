@@ -79,14 +79,19 @@ fn normalize_inputs_sorts_and_shapes_compose_inputs() {
     assert_eq!(normalized.agent_id, "alpha");
     assert_eq!(normalized.profile_name, "Alpha Builder");
     assert_eq!(normalized.compose_mode_hint, Some(ComposeMode::Normal));
-    assert_eq!(normalized.identity_provenance.source, InputSourceKind::Live);
     assert_eq!(
-        normalized.verification_provenance.source,
+        normalized.upstream.identity.provenance.source,
+        InputSourceKind::Live
+    );
+    assert_eq!(
+        normalized.upstream.registry.verification_provenance.source,
         InputSourceKind::Live
     );
     assert_eq!(
         normalized
-            .identity_snapshot
+            .upstream
+            .identity
+            .snapshot
             .as_ref()
             .expect("identity snapshot should survive")
             .active_commitments,
@@ -155,7 +160,7 @@ fn identity_reader_prefers_explicit_path_over_live_and_cache() -> Result<(), Box
         ..SoulConfig::default()
     };
 
-    let selection = IdentityReader::default().load(&request, &config)?;
+    let selection = IdentityReader.load(&request, &config)?;
     let provenance = selection.provenance.clone();
     let signals = selection.value.expect("identity signals");
     let snapshot = signals.snapshot.expect("identity snapshot");
@@ -291,7 +296,7 @@ fn identity_reader_supports_health_only_identify_fixture() -> Result<(), Box<dyn
         ..SoulConfig::default()
     };
 
-    let selection = IdentityReader::default().load(&request, &config)?;
+    let selection = IdentityReader.load(&request, &config)?;
     let provenance = selection.provenance.clone();
     let signals = selection.value.expect("identify signals");
 
@@ -334,9 +339,9 @@ fn normalize_inputs_records_identity_agent_mismatch_as_warning() {
     )
     .expect("bundle should normalize");
 
-    assert!(normalized.identity_snapshot.is_none());
+    assert!(normalized.upstream.identity.snapshot.is_none());
     assert_eq!(
-        normalized.identity_provenance.source,
+        normalized.upstream.identity.provenance.source,
         InputSourceKind::Unavailable
     );
     assert!(
@@ -394,9 +399,9 @@ fn normalize_inputs_preserves_identify_health_without_snapshot() {
     )
     .expect("bundle should normalize");
 
-    assert!(normalized.identity_snapshot.is_none());
+    assert!(normalized.upstream.identity.snapshot.is_none());
     assert_eq!(
-        normalized.identity_recovery_state,
+        normalized.upstream.identity.recovery_state,
         Some(RecoveryState::Recovering)
     );
     assert_eq!(normalized.compose_mode_hint, Some(ComposeMode::Degraded));
@@ -494,6 +499,103 @@ fn cache_writer_persists_derived_key_for_future_reads() -> Result<(), Box<dyn Er
 
     cleanup_workspace(&workspace)?;
     Ok(())
+}
+
+#[test]
+fn normalize_inputs_applies_request_gates_and_degraded_reputation_fallbacks() {
+    let mut request = ComposeRequest::new("alpha", "session-1");
+    request.include_commitments = false;
+    request.include_relationships = false;
+    request.include_reputation = false;
+
+    let normalized = normalize_inputs(
+        &request,
+        BehaviorInputs {
+            soul_config: SoulConfig {
+                agent_id: "alpha".into(),
+                profile_name: "Alpha Builder".into(),
+                ..SoulConfig::default()
+            },
+            identity_snapshot: Some(SessionIdentitySnapshot {
+                agent_id: "alpha".into(),
+                display_name: Some("Alpha".into()),
+                recovery_state: RecoveryState::Recovering,
+                active_commitments: vec!["keep-me-hidden".into()],
+                durable_preferences: vec!["terse".into()],
+                relationship_markers: vec![RelationshipMarker {
+                    subject: "repo".into(),
+                    marker: "owner".into(),
+                    note: Some("trusted".into()),
+                }],
+                facts: vec!["fact".into()],
+                warnings: vec![],
+                fingerprint: Some("fp".into()),
+            }),
+            identity_provenance: InputProvenance::live("identity.json"),
+            verification_result: Some(VerificationResult {
+                status: RegistryStatus::Active,
+                standing_level: Some("good".into()),
+                reason_code: None,
+                verified_at: Some(Utc::now()),
+            }),
+            verification_provenance: InputProvenance::live("verification.json"),
+            reputation_summary: Some(agents_soul::domain::ReputationSummary {
+                score_total: Some(1.8),
+                score_recent_30d: Some(2.2),
+                last_event_at: None,
+                context: vec!["recent review".into()],
+            }),
+            reputation_provenance: InputProvenance::live("reputation.json"),
+            generated_at: Utc::now(),
+            ..BehaviorInputs::default()
+        },
+    )
+    .expect("bundle should normalize");
+
+    let snapshot = normalized
+        .upstream
+        .identity
+        .snapshot
+        .as_ref()
+        .expect("identity snapshot should survive");
+
+    assert!(snapshot.active_commitments.is_empty());
+    assert!(snapshot.relationship_markers.is_empty());
+    assert!(normalized.upstream.registry.reputation.is_none());
+    assert_eq!(
+        normalized.upstream.registry.reputation_provenance.source,
+        InputSourceKind::Unavailable
+    );
+    assert_eq!(normalized.compose_mode_hint, Some(ComposeMode::Degraded));
+}
+
+#[test]
+fn normalize_inputs_uses_suspended_registry_as_restricted_mode_hint() {
+    let request = ComposeRequest::new("alpha", "session-1");
+
+    let normalized = normalize_inputs(
+        &request,
+        BehaviorInputs {
+            soul_config: SoulConfig {
+                agent_id: "alpha".into(),
+                profile_name: "Alpha Builder".into(),
+                ..SoulConfig::default()
+            },
+            identity_recovery_state: Some(RecoveryState::Healthy),
+            verification_result: Some(VerificationResult {
+                status: RegistryStatus::Suspended,
+                standing_level: Some("watch".into()),
+                reason_code: Some("manual-review".into()),
+                verified_at: Some(Utc::now()),
+            }),
+            verification_provenance: InputProvenance::live("verification.json"),
+            generated_at: Utc::now(),
+            ..BehaviorInputs::default()
+        },
+    )
+    .expect("bundle should normalize");
+
+    assert_eq!(normalized.compose_mode_hint, Some(ComposeMode::Restricted));
 }
 
 fn test_workspace(label: &str) -> PathBuf {

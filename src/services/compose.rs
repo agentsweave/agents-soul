@@ -181,8 +181,8 @@ impl ComposeService {
             trait_profile: EffectiveProfileService.derive(&normalized, compose_mode),
             communication_rules: CommunicationRulesService.derive(&normalized, compose_mode),
             decision_rules: DecisionRulesService.derive(&normalized, compose_mode),
-            active_commitments: CommitmentsService.derive(&normalized),
-            relationship_context: RelationshipsService.derive(&normalized),
+            active_commitments: CommitmentsService.derive(&normalized, compose_mode),
+            relationship_context: RelationshipsService.derive(&normalized, compose_mode),
             adaptive_notes: normalized.adaptation_state.notes.clone(),
             warnings: WarningService.derive(&normalized, compose_mode),
             system_prompt_prefix: prompt_prefix,
@@ -242,8 +242,8 @@ mod tests {
         domain::{
             AdaptationConfig, AdaptationState, BehaviorInputs, ComposeMode, ComposeRequest,
             DecisionHeuristic, NormalizedInputs, PersonalityOverride, PersonalityProfile,
-            RecoveryState, RegistryStatus, RelationshipMarker, SessionIdentitySnapshot, SoulConfig,
-            SoulError, VerificationResult,
+            RecoveryState, RegistryStatus, RelationshipMarker, ReputationSummary,
+            SessionIdentitySnapshot, SoulConfig, SoulError, VerificationResult,
         },
         services::{provenance::ProvenanceHasher, templates::PromptTemplateRenderer},
         sources::cache::{CachedInputs, read_cached_inputs_path},
@@ -507,7 +507,7 @@ mod tests {
         assert_eq!(context.status_summary.compose_mode, ComposeMode::Normal);
         assert_eq!(
             context.active_commitments,
-            vec!["follow through".to_owned()]
+            vec!["Active commitment: follow through".to_owned()]
         );
         assert_eq!(context.provenance.registry_verification_at, None);
 
@@ -592,6 +592,81 @@ mod tests {
                 .warnings
                 .iter()
                 .any(|warning| warning.code == "registry_revoked")
+        );
+    }
+
+    #[test]
+    fn compose_shapes_pending_commitments_and_relationships() {
+        let request = ComposeRequest::new("agent.alpha", "session.alpha");
+        let normalized = normalize_inputs(
+            &request,
+            BehaviorInputs {
+                soul_config: SoulConfig {
+                    agent_id: "agent.alpha".to_owned(),
+                    profile_name: "Alpha".to_owned(),
+                    ..SoulConfig::default()
+                },
+                identity_snapshot: Some(SessionIdentitySnapshot {
+                    agent_id: "agent.alpha".to_owned(),
+                    display_name: Some("Alpha".to_owned()),
+                    recovery_state: RecoveryState::Healthy,
+                    active_commitments: vec!["protect the operator".to_owned()],
+                    durable_preferences: Vec::new(),
+                    relationship_markers: vec![RelationshipMarker {
+                        subject: "operator".to_owned(),
+                        marker: "trusted".to_owned(),
+                        note: Some("primary owner".to_owned()),
+                    }],
+                    facts: Vec::new(),
+                    warnings: Vec::new(),
+                    fingerprint: None,
+                }),
+                verification_result: Some(VerificationResult {
+                    status: RegistryStatus::Pending,
+                    standing_level: Some("pending".to_owned()),
+                    reason_code: None,
+                    verified_at: Some(Utc::now()),
+                }),
+                reputation_summary: Some(ReputationSummary {
+                    score_total: Some(2.5),
+                    score_recent_30d: Some(2.1),
+                    last_event_at: Some(Utc::now()),
+                    context: vec!["recent dip".to_owned()],
+                }),
+                generated_at: Utc::now(),
+                ..BehaviorInputs::default()
+            },
+        )
+        .expect("normalized inputs");
+
+        let deps = crate::app::deps::AppDeps::default();
+        let context = ComposeService
+            .build_context(&deps, normalized)
+            .expect("context should build");
+
+        assert!(
+            context
+                .communication_rules
+                .iter()
+                .any(|rule| rule.contains("pending"))
+        );
+        assert!(
+            context
+                .decision_rules
+                .iter()
+                .any(|rule| rule.contains("pending standing"))
+        );
+        assert!(
+            context
+                .active_commitments
+                .iter()
+                .any(|item| item.contains("Pending commitment: protect the operator"))
+        );
+        assert!(
+            context
+                .relationship_context
+                .iter()
+                .any(|item| item.contains("Provisional relationship: operator -> trusted"))
         );
     }
 
@@ -712,7 +787,10 @@ mod tests {
         )?;
 
         assert_eq!(context.profile_name, "Alpha");
-        assert_eq!(context.status_summary.compose_mode, ComposeMode::Degraded);
+        assert_eq!(
+            context.status_summary.compose_mode,
+            ComposeMode::BaselineOnly
+        );
         assert!(!context.status_summary.identity_loaded);
         assert!(!context.status_summary.registry_verified);
         assert!(context.adaptive_notes.is_empty());
