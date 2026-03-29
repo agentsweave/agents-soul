@@ -3,10 +3,21 @@ use std::{collections::BTreeMap, path::PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    app::deps::SoulDependencies,
-    domain::{PersonalityProfilePatch, SoulConfig, SoulError},
-    services::ServiceError,
+    app::{
+        deps::SoulDependencies,
+        errors::{SoulHttpErrorResponse, SoulTransportError, map_soul_error},
+    },
+    domain::{ComposeRequest, PersonalityProfilePatch, SoulConfig, SoulError},
+    services::{ServiceError, explain::InspectTraitProjection},
 };
+
+pub fn traits_projection(
+    deps: &SoulDependencies,
+    request: ComposeRequest,
+) -> Result<InspectTraitProjection, ServiceError> {
+    deps.inspect_report(request)
+        .map(|report| report.traits_only())
+}
 
 pub fn update_traits(
     deps: &SoulDependencies,
@@ -71,4 +82,12 @@ pub fn handle_update_traits(
     let workspace_root = request.workspace_root.clone();
     let patch = request.into_patch()?;
     update_traits(deps, workspace_root, patch)
+}
+
+pub fn map_traits_error(error: &SoulError) -> SoulTransportError {
+    map_soul_error(error)
+}
+
+pub fn traits_error_response(error: &SoulError) -> SoulHttpErrorResponse {
+    map_traits_error(error).http_response()
 }

@@ -4,13 +4,13 @@ use crate::{
     api::{
         compose::compose_context,
         explain::explain_report,
-        heuristics::{UpdateHeuristicsRequest, handle_update_heuristics},
+        heuristics::{UpdateHeuristicsRequest, handle_update_heuristics, heuristics_projection},
         interactions::{
             RecordInteractionRequest, handle_record_interaction, record_error_response,
             record_success_status,
         },
         reset::{ResetAdaptationRequest, handle_reset_adaptation, reset_error_response},
-        traits::{UpdateTraitsRequest, handle_update_traits},
+        traits::{UpdateTraitsRequest, handle_update_traits, traits_projection},
     },
     app::{
         deps::SoulDependencies,
@@ -56,6 +56,16 @@ pub const EXPLAIN_ROUTE: ApiEndpoint = ApiEndpoint {
     path: "/v1/explain",
     handler: "api::explain::explain_report",
 };
+pub const READ_TRAITS_ROUTE: ApiEndpoint = ApiEndpoint {
+    method: HttpMethod::Post,
+    path: "/v1/traits",
+    handler: "api::traits::traits_projection",
+};
+pub const READ_HEURISTICS_ROUTE: ApiEndpoint = ApiEndpoint {
+    method: HttpMethod::Post,
+    path: "/v1/heuristics",
+    handler: "api::heuristics::heuristics_projection",
+};
 pub const UPDATE_HEURISTICS_ROUTE: ApiEndpoint = ApiEndpoint {
     method: HttpMethod::Patch,
     path: "/v1/heuristics",
@@ -78,7 +88,12 @@ const WRITE_ENDPOINTS: [ApiEndpoint; 4] = [
     RECORD_INTERACTION_ROUTE,
     RESET_ADAPTATION_ROUTE,
 ];
-const READ_ENDPOINTS: [ApiEndpoint; 2] = [COMPOSE_ROUTE, EXPLAIN_ROUTE];
+const READ_ENDPOINTS: [ApiEndpoint; 4] = [
+    COMPOSE_ROUTE,
+    EXPLAIN_ROUTE,
+    READ_TRAITS_ROUTE,
+    READ_HEURISTICS_ROUTE,
+];
 
 pub fn write_endpoints() -> &'static [ApiEndpoint] {
     &WRITE_ENDPOINTS
@@ -122,6 +137,21 @@ fn dispatch_request(
             let body: crate::domain::ComposeRequest = parse_json(request.body_json)?;
             let report = explain_report(deps, body)?;
             json_response(200, &report)
+        }
+        (method, path)
+            if method == READ_TRAITS_ROUTE.method.as_str() && path == READ_TRAITS_ROUTE.path =>
+        {
+            let body: crate::domain::ComposeRequest = parse_json(request.body_json)?;
+            let traits = traits_projection(deps, body)?;
+            json_response(200, &traits)
+        }
+        (method, path)
+            if method == READ_HEURISTICS_ROUTE.method.as_str()
+                && path == READ_HEURISTICS_ROUTE.path =>
+        {
+            let body: crate::domain::ComposeRequest = parse_json(request.body_json)?;
+            let heuristics = heuristics_projection(deps, body)?;
+            json_response(200, &heuristics)
         }
         (method, path)
             if method == UPDATE_TRAITS_ROUTE.method.as_str()
@@ -263,8 +293,9 @@ mod tests {
     };
 
     use super::{
-        COMPOSE_ROUTE, EXPLAIN_ROUTE, HttpRequest, RECORD_INTERACTION_ROUTE,
-        RESET_ADAPTATION_ROUTE, UPDATE_HEURISTICS_ROUTE, UPDATE_TRAITS_ROUTE, handle_request,
+        COMPOSE_ROUTE, EXPLAIN_ROUTE, HttpRequest, READ_HEURISTICS_ROUTE, READ_TRAITS_ROUTE,
+        RECORD_INTERACTION_ROUTE, RESET_ADAPTATION_ROUTE, UPDATE_HEURISTICS_ROUTE,
+        UPDATE_TRAITS_ROUTE, handle_request,
     };
 
     #[test]
@@ -380,6 +411,128 @@ mod tests {
                 .unwrap_or_default()
                 .contains("Explain Alpha"),
             "expected rendered explain output to contain report title".to_owned(),
+        )?;
+        cleanup_workspace(&workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn post_traits_endpoint_returns_trait_projection() -> Result<(), Box<dyn Error>> {
+        let workspace = test_workspace("api-traits-read");
+        fs::create_dir_all(&workspace)?;
+        write_soul_config(&workspace, "agent.alpha", "Alpha")?;
+        let identity_path = workspace.join("identity.json");
+        let verification_path = workspace.join("verification.json");
+        fs::write(
+            &identity_path,
+            include_str!("../../tests/fixtures/compose_modes/identity_healthy.json"),
+        )?;
+        fs::write(
+            &verification_path,
+            include_str!("../../tests/fixtures/compose_modes/verification_active.json"),
+        )?;
+
+        let body = serde_json::json!({
+            "workspace_id": workspace.display().to_string(),
+            "agent_id": "agent.alpha",
+            "session_id": "session.alpha",
+            "identity_snapshot_path": identity_path.display().to_string(),
+            "registry_verification_path": verification_path.display().to_string()
+        })
+        .to_string();
+
+        let response = handle_request(
+            &AppDeps::default(),
+            HttpRequest {
+                method: READ_TRAITS_ROUTE.method.as_str(),
+                path: READ_TRAITS_ROUTE.path,
+                body_json: &body,
+            },
+        );
+
+        ensure(
+            response.status == 200,
+            format!("expected 200, got {}", response.status),
+        )?;
+        let actual: crate::services::explain::InspectTraitProjection =
+            serde_json::from_str(&response.body_json)?;
+        let expected = AppDeps::default()
+            .inspect_report(crate::domain::ComposeRequest {
+                workspace_id: workspace.display().to_string(),
+                agent_id: "agent.alpha".to_owned(),
+                session_id: "session.alpha".to_owned(),
+                identity_snapshot_path: Some(identity_path.display().to_string()),
+                registry_verification_path: Some(verification_path.display().to_string()),
+                registry_reputation_path: None,
+                include_reputation: true,
+                include_relationships: true,
+                include_commitments: true,
+            })?
+            .traits_only();
+        ensure(
+            actual == expected,
+            "traits endpoint diverged from shared inspect projection".to_owned(),
+        )?;
+        cleanup_workspace(&workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn post_heuristics_endpoint_returns_heuristic_projection() -> Result<(), Box<dyn Error>> {
+        let workspace = test_workspace("api-heuristics-read");
+        fs::create_dir_all(&workspace)?;
+        write_soul_config(&workspace, "agent.alpha", "Alpha")?;
+        let identity_path = workspace.join("identity.json");
+        let verification_path = workspace.join("verification.json");
+        fs::write(
+            &identity_path,
+            include_str!("../../tests/fixtures/compose_modes/identity_healthy.json"),
+        )?;
+        fs::write(
+            &verification_path,
+            include_str!("../../tests/fixtures/compose_modes/verification_active.json"),
+        )?;
+
+        let body = serde_json::json!({
+            "workspace_id": workspace.display().to_string(),
+            "agent_id": "agent.alpha",
+            "session_id": "session.alpha",
+            "identity_snapshot_path": identity_path.display().to_string(),
+            "registry_verification_path": verification_path.display().to_string()
+        })
+        .to_string();
+
+        let response = handle_request(
+            &AppDeps::default(),
+            HttpRequest {
+                method: READ_HEURISTICS_ROUTE.method.as_str(),
+                path: READ_HEURISTICS_ROUTE.path,
+                body_json: &body,
+            },
+        );
+
+        ensure(
+            response.status == 200,
+            format!("expected 200, got {}", response.status),
+        )?;
+        let actual: crate::services::explain::InspectHeuristicProjection =
+            serde_json::from_str(&response.body_json)?;
+        let expected = AppDeps::default()
+            .inspect_report(crate::domain::ComposeRequest {
+                workspace_id: workspace.display().to_string(),
+                agent_id: "agent.alpha".to_owned(),
+                session_id: "session.alpha".to_owned(),
+                identity_snapshot_path: Some(identity_path.display().to_string()),
+                registry_verification_path: Some(verification_path.display().to_string()),
+                registry_reputation_path: None,
+                include_reputation: true,
+                include_relationships: true,
+                include_commitments: true,
+            })?
+            .heuristics_only();
+        ensure(
+            actual == expected,
+            "heuristics endpoint diverged from shared inspect projection".to_owned(),
         )?;
         cleanup_workspace(&workspace)?;
         Ok(())

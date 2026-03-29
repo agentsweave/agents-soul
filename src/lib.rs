@@ -16,8 +16,9 @@ pub mod sources;
 pub mod storage;
 
 pub use api::{
-    COMPOSE_ROUTE, EXPLAIN_ROUTE, HttpRequest, HttpResponse, RECORD_INTERACTION_ROUTE,
-    RESET_ADAPTATION_ROUTE, UPDATE_HEURISTICS_ROUTE, UPDATE_TRAITS_ROUTE, handle_request,
+    COMPOSE_ROUTE, EXPLAIN_ROUTE, HttpRequest, HttpResponse, READ_HEURISTICS_ROUTE,
+    READ_TRAITS_ROUTE, RECORD_INTERACTION_ROUTE, RESET_ADAPTATION_ROUTE, UPDATE_HEURISTICS_ROUTE,
+    UPDATE_TRAITS_ROUTE, handle_request,
 };
 pub use app::{
     deps::{AppDeps, SoulDependencies, SourceDependencies},
