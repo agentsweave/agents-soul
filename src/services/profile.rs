@@ -4,12 +4,16 @@ use crate::domain::{ComposeMode, NormalizedInputs, PersonalityProfile};
 pub struct EffectiveProfileService;
 
 impl EffectiveProfileService {
+    pub fn derive_baseline(&self, normalized: &NormalizedInputs) -> PersonalityProfile {
+        normalized.soul_config.trait_baseline.clone()
+    }
+
     pub fn derive(
         &self,
         normalized: &NormalizedInputs,
         compose_mode: ComposeMode,
     ) -> PersonalityProfile {
-        let mut profile = normalized.soul_config.trait_baseline.clone();
+        let mut profile = self.derive_baseline(normalized);
 
         if normalized.soul_config.adaptation.enabled {
             let overrides = &normalized.adaptation_state.trait_overrides;
@@ -151,5 +155,49 @@ mod tests {
         assert!(profile.initiative <= 0.35);
         assert!(profile.risk_tolerance <= 0.12);
         assert!(profile.formality >= 0.75);
+    }
+
+    #[test]
+    fn baseline_profile_stays_inspectable_alongside_effective_profile() {
+        let request = ComposeRequest::new("alpha", "session-1");
+        let mut config = SoulConfig {
+            agent_id: "alpha".into(),
+            profile_name: "Alpha".into(),
+            ..SoulConfig::default()
+        };
+        config.limits.max_trait_drift = 0.10;
+
+        let normalized = normalize_inputs(
+            &request,
+            BehaviorInputs {
+                soul_config: config,
+                adaptation_state: AdaptationState {
+                    trait_overrides: PersonalityOverride {
+                        directness: 0.25,
+                        risk_tolerance: 0.50,
+                        ..PersonalityOverride::default()
+                    },
+                    ..AdaptationState::default()
+                },
+                generated_at: Utc::now(),
+                ..BehaviorInputs::default()
+            },
+        )
+        .expect("normalized inputs");
+
+        let service = EffectiveProfileService;
+        let baseline = service.derive_baseline(&normalized);
+        let effective = service.derive(&normalized, ComposeMode::Degraded);
+
+        assert_eq!(
+            baseline.directness,
+            normalized.soul_config.trait_baseline.directness
+        );
+        assert_eq!(
+            baseline.risk_tolerance,
+            normalized.soul_config.trait_baseline.risk_tolerance
+        );
+        assert!((effective.directness - 0.91).abs() < f32::EPSILON);
+        assert!(effective.risk_tolerance <= 0.18);
     }
 }

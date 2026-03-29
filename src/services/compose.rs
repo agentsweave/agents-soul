@@ -125,6 +125,7 @@ impl ComposeService {
             agent_id: normalized.agent_id.clone(),
             profile_name,
             status_summary,
+            baseline_trait_profile: EffectiveProfileService.derive_baseline(&fail_closed_inputs),
             trait_profile: EffectiveProfileService
                 .derive(&fail_closed_inputs, ComposeMode::FailClosed),
             communication_rules: vec![
@@ -176,6 +177,7 @@ impl ComposeService {
             agent_id: normalized.agent_id.clone(),
             profile_name,
             status_summary,
+            baseline_trait_profile: EffectiveProfileService.derive_baseline(&normalized),
             trait_profile: EffectiveProfileService.derive(&normalized, compose_mode),
             communication_rules: CommunicationRulesService.derive(&normalized, compose_mode),
             decision_rules: DecisionRulesService.derive(&normalized, compose_mode),
@@ -239,9 +241,9 @@ mod tests {
         app::deps::{AdaptationStateLoader, AppDeps, ComposeClock, SoulConfigLoader},
         domain::{
             AdaptationConfig, AdaptationState, BehaviorInputs, ComposeMode, ComposeRequest,
-            DecisionHeuristic, NormalizedInputs, PersonalityOverride, RecoveryState,
-            RegistryStatus, RelationshipMarker, SessionIdentitySnapshot, SoulConfig, SoulError,
-            VerificationResult,
+            DecisionHeuristic, NormalizedInputs, PersonalityOverride, PersonalityProfile,
+            RecoveryState, RegistryStatus, RelationshipMarker, SessionIdentitySnapshot, SoulConfig,
+            SoulError, VerificationResult,
         },
         services::{provenance::ProvenanceHasher, templates::PromptTemplateRenderer},
         sources::cache::{CachedInputs, read_cached_inputs_path},
@@ -389,13 +391,12 @@ mod tests {
             },
         )?;
 
+        assert_eq!(context.baseline_trait_profile.verbosity, 0.34);
         assert_eq!(context.trait_profile.verbosity, 0.49);
         assert_eq!(
             context.communication_rules,
             vec![
-                "Call out degraded or missing upstream context before acting on uncertain assumptions."
-                    .to_owned(),
-                "Reduce autonomous initiative until identity and registry inputs are healthy again."
+                "Avoid claiming identity-derived commitments or relationship context that was not loaded."
                     .to_owned(),
                 "Use a professional-direct register.".to_owned(),
                 "Keep responses within a long paragraph budget.".to_owned(),
@@ -408,7 +409,7 @@ mod tests {
         assert_eq!(
             context.decision_rules,
             vec![
-                "Prefer reversible actions and verification steps while upstream context is degraded."
+                "Do not infer relationship-specific obligations that are absent from the loaded baseline inputs."
                     .to_owned(),
                 "Use adapted risk review.".to_owned()
             ]
@@ -580,6 +581,10 @@ mod tests {
         assert!(context.active_commitments.is_empty());
         assert!(context.relationship_context.is_empty());
         assert!(context.adaptive_notes.is_empty());
+        assert_eq!(
+            context.baseline_trait_profile,
+            PersonalityProfile::default()
+        );
         assert!(context.trait_profile.initiative <= 0.05);
         assert!(context.trait_profile.verbosity <= 0.25);
         assert!(

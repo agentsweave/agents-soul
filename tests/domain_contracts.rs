@@ -91,6 +91,7 @@ fn behavioral_context_carries_typed_status_information() {
             reputation_loaded: true,
             recovery_state: Some(RecoveryState::Healthy),
         },
+        baseline_trait_profile: PersonalityProfile::default(),
         trait_profile: PersonalityProfile::default(),
         communication_rules: vec!["Respond concisely and directly.".to_owned()],
         decision_rules: vec!["Require operator confirmation for risky actions.".to_owned()],
