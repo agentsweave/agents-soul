@@ -7,6 +7,6 @@ pub mod router;
 pub mod traits;
 
 pub use router::{
-    HttpRequest, HttpResponse, RECORD_INTERACTION_ROUTE, RESET_ADAPTATION_ROUTE,
-    UPDATE_HEURISTICS_ROUTE, UPDATE_TRAITS_ROUTE, handle_request,
+    COMPOSE_ROUTE, EXPLAIN_ROUTE, HttpRequest, HttpResponse, RECORD_INTERACTION_ROUTE,
+    RESET_ADAPTATION_ROUTE, UPDATE_HEURISTICS_ROUTE, UPDATE_TRAITS_ROUTE, handle_request,
 };

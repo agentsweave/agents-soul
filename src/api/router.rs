@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     api::{
+        compose::compose_context,
+        explain::explain_report,
         heuristics::{UpdateHeuristicsRequest, handle_update_heuristics},
         interactions::{
             RecordInteractionRequest, handle_record_interaction, record_error_response,
@@ -44,6 +46,16 @@ pub const UPDATE_TRAITS_ROUTE: ApiEndpoint = ApiEndpoint {
     path: "/v1/traits",
     handler: "api::traits::handle_update_traits",
 };
+pub const COMPOSE_ROUTE: ApiEndpoint = ApiEndpoint {
+    method: HttpMethod::Post,
+    path: "/v1/compose",
+    handler: "api::compose::compose_context",
+};
+pub const EXPLAIN_ROUTE: ApiEndpoint = ApiEndpoint {
+    method: HttpMethod::Post,
+    path: "/v1/explain",
+    handler: "api::explain::explain_report",
+};
 pub const UPDATE_HEURISTICS_ROUTE: ApiEndpoint = ApiEndpoint {
     method: HttpMethod::Patch,
     path: "/v1/heuristics",
@@ -66,9 +78,14 @@ const WRITE_ENDPOINTS: [ApiEndpoint; 4] = [
     RECORD_INTERACTION_ROUTE,
     RESET_ADAPTATION_ROUTE,
 ];
+const READ_ENDPOINTS: [ApiEndpoint; 2] = [COMPOSE_ROUTE, EXPLAIN_ROUTE];
 
 pub fn write_endpoints() -> &'static [ApiEndpoint] {
     &WRITE_ENDPOINTS
+}
+
+pub fn read_endpoints() -> &'static [ApiEndpoint] {
+    &READ_ENDPOINTS
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,6 +113,16 @@ fn dispatch_request(
     request: HttpRequest<'_>,
 ) -> Result<HttpResponse, SoulError> {
     match (request.method, request.path) {
+        (method, path) if method == COMPOSE_ROUTE.method.as_str() && path == COMPOSE_ROUTE.path => {
+            let body: crate::domain::ComposeRequest = parse_json(request.body_json)?;
+            let context = compose_context(deps, body)?;
+            json_response(200, &context)
+        }
+        (method, path) if method == EXPLAIN_ROUTE.method.as_str() && path == EXPLAIN_ROUTE.path => {
+            let body: crate::domain::ComposeRequest = parse_json(request.body_json)?;
+            let report = explain_report(deps, body)?;
+            json_response(200, &report)
+        }
         (method, path)
             if method == UPDATE_TRAITS_ROUTE.method.as_str()
                 && path == UPDATE_TRAITS_ROUTE.path =>
@@ -236,9 +263,127 @@ mod tests {
     };
 
     use super::{
-        HttpRequest, RECORD_INTERACTION_ROUTE, RESET_ADAPTATION_ROUTE, UPDATE_HEURISTICS_ROUTE,
-        UPDATE_TRAITS_ROUTE, handle_request,
+        COMPOSE_ROUTE, EXPLAIN_ROUTE, HttpRequest, RECORD_INTERACTION_ROUTE,
+        RESET_ADAPTATION_ROUTE, UPDATE_HEURISTICS_ROUTE, UPDATE_TRAITS_ROUTE, handle_request,
     };
+
+    #[test]
+    fn post_compose_endpoint_returns_behavioral_context() -> Result<(), Box<dyn Error>> {
+        let workspace = test_workspace("api-compose");
+        fs::create_dir_all(&workspace)?;
+        write_soul_config(&workspace, "agent.alpha", "Alpha")?;
+        let identity_path = workspace.join("identity.json");
+        let verification_path = workspace.join("verification.json");
+        fs::write(
+            &identity_path,
+            include_str!("../../tests/fixtures/compose_modes/identity_healthy.json"),
+        )?;
+        fs::write(
+            &verification_path,
+            include_str!("../../tests/fixtures/compose_modes/verification_active.json"),
+        )?;
+
+        let body = serde_json::json!({
+            "workspace_id": workspace.display().to_string(),
+            "agent_id": "agent.alpha",
+            "session_id": "session.alpha",
+            "identity_snapshot_path": identity_path.display().to_string(),
+            "registry_verification_path": verification_path.display().to_string()
+        })
+        .to_string();
+
+        let response = handle_request(
+            &AppDeps::default(),
+            HttpRequest {
+                method: COMPOSE_ROUTE.method.as_str(),
+                path: COMPOSE_ROUTE.path,
+                body_json: &body,
+            },
+        );
+
+        ensure(
+            response.status == 200,
+            format!("expected 200, got {}", response.status),
+        )?;
+        let body: Value = serde_json::from_str(&response.body_json)?;
+        ensure(
+            body["status_summary"]["compose_mode"] == "normal",
+            format!(
+                "expected normal compose mode, got {:?}",
+                body["status_summary"]["compose_mode"]
+            ),
+        )?;
+        ensure(
+            body["agent_id"] == "agent.alpha",
+            format!("expected agent.alpha, got {:?}", body["agent_id"]),
+        )?;
+        cleanup_workspace(&workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn post_explain_endpoint_returns_explain_report() -> Result<(), Box<dyn Error>> {
+        let workspace = test_workspace("api-explain");
+        fs::create_dir_all(&workspace)?;
+        write_soul_config(&workspace, "agent.alpha", "Alpha")?;
+        let identity_path = workspace.join("identity.json");
+        let verification_path = workspace.join("verification.json");
+        fs::write(
+            &identity_path,
+            include_str!("../../tests/fixtures/compose_modes/identity_degraded.json"),
+        )?;
+        fs::write(
+            &verification_path,
+            include_str!("../../tests/fixtures/compose_modes/verification_active.json"),
+        )?;
+
+        let body = serde_json::json!({
+            "workspace_id": workspace.display().to_string(),
+            "agent_id": "agent.alpha",
+            "session_id": "session.alpha",
+            "identity_snapshot_path": identity_path.display().to_string(),
+            "registry_verification_path": verification_path.display().to_string()
+        })
+        .to_string();
+
+        let response = handle_request(
+            &AppDeps::default(),
+            HttpRequest {
+                method: EXPLAIN_ROUTE.method.as_str(),
+                path: EXPLAIN_ROUTE.path,
+                body_json: &body,
+            },
+        );
+
+        ensure(
+            response.status == 200,
+            format!("expected 200, got {}", response.status),
+        )?;
+        let body: Value = serde_json::from_str(&response.body_json)?;
+        ensure(
+            body["status_summary"]["compose_mode"] == "degraded",
+            format!(
+                "expected degraded compose mode, got {:?}",
+                body["status_summary"]["compose_mode"]
+            ),
+        )?;
+        ensure(
+            body["inspect"]["status_summary"]["compose_mode"] == "degraded",
+            format!(
+                "expected degraded inspect mode, got {:?}",
+                body["inspect"]["status_summary"]["compose_mode"]
+            ),
+        )?;
+        ensure(
+            body["rendered"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Explain Alpha"),
+            "expected rendered explain output to contain report title".to_owned(),
+        )?;
+        cleanup_workspace(&workspace)?;
+        Ok(())
+    }
 
     #[test]
     fn patch_traits_endpoint_updates_workspace_config() -> Result<(), Box<dyn Error>> {
@@ -261,10 +406,25 @@ mod tests {
             },
         );
 
-        assert_eq!(response.status, 200);
+        ensure(
+            response.status == 200,
+            format!("expected 200, got {}", response.status),
+        )?;
         let body: Value = serde_json::from_str(&response.body_json)?;
-        assert_eq!(body["trait_baseline"]["verbosity"], 0.82);
-        assert_eq!(body["trait_baseline"]["formality"], 0.71);
+        ensure(
+            body["trait_baseline"]["verbosity"] == 0.82,
+            format!(
+                "expected verbosity 0.82, got {:?}",
+                body["trait_baseline"]["verbosity"]
+            ),
+        )?;
+        ensure(
+            body["trait_baseline"]["formality"] == 0.71,
+            format!(
+                "expected formality 0.71, got {:?}",
+                body["trait_baseline"]["formality"]
+            ),
+        )?;
         cleanup_workspace(&workspace)?;
         Ok(())
     }
@@ -286,14 +446,18 @@ mod tests {
             },
         );
 
-        assert_eq!(response.status, 400);
+        ensure(
+            response.status == 400,
+            format!("expected 400, got {}", response.status),
+        )?;
         let body: Value = serde_json::from_str(&response.body_json)?;
-        assert!(
+        ensure(
             body["error"]["message"]
                 .as_str()
                 .unwrap_or_default()
-                .contains("heuristics endpoint requires")
-        );
+                .contains("heuristics endpoint requires"),
+            format!("unexpected error message: {:?}", body["error"]["message"]),
+        )?;
         Ok(())
     }
 
@@ -324,9 +488,15 @@ mod tests {
             },
         );
 
-        assert_eq!(response.status, 201);
+        ensure(
+            response.status == 201,
+            format!("expected 201, got {}", response.status),
+        )?;
         let body: Value = serde_json::from_str(&response.body_json)?;
-        assert_eq!(body["effect"], "Inserted");
+        ensure(
+            body["effect"] == "Inserted",
+            format!("expected Inserted effect, got {:?}", body["effect"]),
+        )?;
         cleanup_workspace(&workspace)?;
         Ok(())
     }
@@ -366,10 +536,22 @@ mod tests {
             },
         );
 
-        assert_eq!(first.status, 201);
-        assert_eq!(duplicate.status, 200);
+        ensure(
+            first.status == 201,
+            format!("expected 201, got {}", first.status),
+        )?;
+        ensure(
+            duplicate.status == 200,
+            format!("expected 200, got {}", duplicate.status),
+        )?;
         let duplicate_body: Value = serde_json::from_str(&duplicate.body_json)?;
-        assert_eq!(duplicate_body["effect"], "Duplicate");
+        ensure(
+            duplicate_body["effect"] == "Duplicate",
+            format!(
+                "expected Duplicate effect, got {:?}",
+                duplicate_body["effect"]
+            ),
+        )?;
         cleanup_workspace(&workspace)?;
         Ok(())
     }
@@ -399,7 +581,10 @@ mod tests {
                 body_json: &interaction_body,
             },
         );
-        assert_eq!(interaction_response.status, 201);
+        ensure(
+            interaction_response.status == 201,
+            format!("expected 201, got {}", interaction_response.status),
+        )?;
 
         let reset_body = serde_json::json!({
             "workspace_root": workspace.display().to_string(),
@@ -417,9 +602,15 @@ mod tests {
             },
         );
 
-        assert_eq!(reset_response.status, 200);
+        ensure(
+            reset_response.status == 200,
+            format!("expected 200, got {}", reset_response.status),
+        )?;
         let reset_body: Value = serde_json::from_str(&reset_response.body_json)?;
-        assert_eq!(reset_body["effect"], "Cleared");
+        ensure(
+            reset_body["effect"] == "Cleared",
+            format!("expected Cleared effect, got {:?}", reset_body["effect"]),
+        )?;
 
         let conn = sqlite::open_database(WorkspacePaths::new(&workspace).adaptation_db_path())?;
         let event_count: i64 = conn.query_row(
@@ -427,7 +618,10 @@ mod tests {
             rusqlite::params!["agent.alpha"],
             |row| row.get(0),
         )?;
-        assert_eq!(event_count, 1);
+        ensure(
+            event_count == 1,
+            format!("expected 1 preserved interaction event, got {event_count}"),
+        )?;
         cleanup_workspace(&workspace)?;
         Ok(())
     }
@@ -443,9 +637,15 @@ mod tests {
             },
         );
 
-        assert_eq!(response.status, 404);
+        ensure(
+            response.status == 404,
+            format!("expected 404, got {}", response.status),
+        )?;
         let body: Value = serde_json::from_str(&response.body_json)?;
-        assert_eq!(body["error"]["code"], "not-found");
+        ensure(
+            body["error"]["code"] == "not-found",
+            format!("expected not-found code, got {:?}", body["error"]["code"]),
+        )?;
         Ok(())
     }
 
@@ -460,9 +660,18 @@ mod tests {
             },
         );
 
-        assert_eq!(response.status, 400);
+        ensure(
+            response.status == 400,
+            format!("expected 400, got {}", response.status),
+        )?;
         let body: Value = serde_json::from_str(&response.body_json)?;
-        assert_eq!(body["error"]["code"], "request-validation");
+        ensure(
+            body["error"]["code"] == "request-validation",
+            format!(
+                "expected request-validation code, got {:?}",
+                body["error"]["code"]
+            ),
+        )?;
         Ok(())
     }
 
@@ -495,5 +704,13 @@ mod tests {
         };
         fs::write(workspace.join("soul.toml"), toml::to_string(&config)?)?;
         Ok(())
+    }
+
+    fn ensure(condition: bool, message: String) -> Result<(), Box<dyn Error>> {
+        if condition {
+            Ok(())
+        } else {
+            Err(message.into())
+        }
     }
 }
