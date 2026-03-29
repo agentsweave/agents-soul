@@ -73,6 +73,32 @@ fn api_error_response_uses_shared_transport_matrix() {
 }
 
 #[test]
+fn api_mutation_error_responses_use_shared_transport_matrix() {
+    let error = SoulError::Storage("db locked".into());
+    let mapped = map_soul_error(&error);
+
+    let interaction_response = api::interactions::record_error_response(&error);
+    assert_eq!(interaction_response.status, mapped.http_status);
+    assert_eq!(interaction_response.body.error.code, mapped.code);
+    assert_eq!(interaction_response.body.error.category, mapped.category);
+    assert_eq!(interaction_response.body.error.message, mapped.message);
+    assert_eq!(
+        interaction_response.body.error.compose_mode_hint,
+        mapped.compose_mode_hint
+    );
+
+    let reset_response = api::reset::reset_error_response(&error);
+    assert_eq!(reset_response.status, mapped.http_status);
+    assert_eq!(reset_response.body.error.code, mapped.code);
+    assert_eq!(reset_response.body.error.category, mapped.category);
+    assert_eq!(reset_response.body.error.message, mapped.message);
+    assert_eq!(
+        reset_response.body.error.compose_mode_hint,
+        mapped.compose_mode_hint
+    );
+}
+
+#[test]
 fn mcp_error_response_uses_shared_transport_matrix() {
     let error = SoulError::UpstreamInvalid {
         input: "registry-verification",

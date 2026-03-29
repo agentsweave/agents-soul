@@ -12,8 +12,8 @@ use agents_soul::domain::{
 };
 use agents_soul::sources::{
     cache::{
-        CachedInputs, context_cache_key, read_cached_inputs, read_cached_inputs_path,
-        write_cached_inputs,
+        CachedFreshness, CachedInputs, context_cache_key, read_cached_inputs,
+        read_cached_inputs_path, write_cached_inputs,
     },
     identity::IdentityReader,
     normalize::normalize_inputs,
@@ -183,6 +183,12 @@ fn registry_reader_uses_cache_when_live_files_are_missing() -> Result<(), Box<dy
         &request,
         &CachedInputs {
             cache_key: None,
+            freshness: Some(CachedFreshness {
+                config_hash: None,
+                adaptation_hash: None,
+                identity_fingerprint: None,
+                registry_verification_at: None,
+            }),
             identity_snapshot: None,
             verification_result: Some(VerificationResult {
                 status: RegistryStatus::Active,
@@ -465,6 +471,12 @@ fn cache_writer_persists_derived_key_for_future_reads() -> Result<(), Box<dyn Er
     request.workspace_id = workspace.display().to_string();
     let cached_inputs = CachedInputs {
         cache_key: None,
+        freshness: Some(CachedFreshness {
+            config_hash: None,
+            adaptation_hash: None,
+            identity_fingerprint: Some("fp".to_owned()),
+            registry_verification_at: None,
+        }),
         identity_snapshot: Some(SessionIdentitySnapshot {
             agent_id: "alpha".to_owned(),
             display_name: Some("Alpha".to_owned()),
@@ -474,7 +486,7 @@ fn cache_writer_persists_derived_key_for_future_reads() -> Result<(), Box<dyn Er
             relationship_markers: Vec::new(),
             facts: Vec::new(),
             warnings: Vec::new(),
-            fingerprint: None,
+            fingerprint: Some("fp".to_owned()),
         }),
         verification_result: None,
         reputation_summary: None,

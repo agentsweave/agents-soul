@@ -146,13 +146,6 @@ fn runtime_dispatch_preserves_injected_config_and_deps() -> Result<(), SoulError
                     reputation_provenance: InputProvenance::unavailable("not loaded"),
                 },
             },
-            identity_snapshot: None,
-            identity_recovery_state: None,
-            identity_provenance: InputProvenance::unavailable("not loaded"),
-            verification_result: None,
-            verification_provenance: InputProvenance::unavailable("not loaded"),
-            reputation_summary: None,
-            reputation_provenance: InputProvenance::unavailable("not loaded"),
             soul_config: SoulConfig::default(),
             adaptation_state: AdaptationState::default(),
             reader_warnings: Vec::new(),
@@ -226,6 +219,7 @@ fn bootstrap_identity_reader_prefers_live_identify_signals_over_live_snapshot_an
         &request,
         &CachedInputs {
             cache_key: None,
+            freshness: None,
             identity_snapshot: Some(SessionIdentitySnapshot {
                 agent_id: "alpha".to_owned(),
                 display_name: Some("Alpha".to_owned()),
@@ -298,6 +292,7 @@ fn bootstrap_registry_reader_prefers_explicit_verification_over_live_and_cache()
         &request,
         &CachedInputs {
             cache_key: None,
+            freshness: None,
             identity_snapshot: None,
             verification_result: Some(VerificationResult {
                 status: RegistryStatus::Revoked,
@@ -342,9 +337,17 @@ fn bootstrap_utility_helpers_are_deterministic() -> Result<(), SoulError> {
         recovery_state: RecoveryState::Healthy,
         active_commitments: vec!["commit-a".to_owned(), "commit-b".to_owned()],
         durable_preferences: vec!["prefer-terse".to_owned()],
-        relationship_markers: vec!["trusted-reviewer".to_owned()],
+        relationship_markers: vec![agents_soul::domain::RelationshipMarker {
+            subject: "operator".to_owned(),
+            marker: "trusted-reviewer".to_owned(),
+            note: None,
+        }],
         facts: vec!["fact-1".to_owned()],
-        warnings: vec!["warning-1".to_owned()],
+        warnings: vec![agents_soul::domain::BehaviorWarning {
+            severity: agents_soul::domain::WarningSeverity::Info,
+            code: "warning-1".to_owned(),
+            message: "warning-1".to_owned(),
+        }],
         fingerprint: None,
     };
 

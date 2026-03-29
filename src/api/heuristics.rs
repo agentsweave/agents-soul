@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     app::deps::SoulDependencies,
-    domain::{DecisionHeuristicPatch, SoulConfig},
+    domain::{DecisionHeuristicPatch, SoulConfig, SoulError},
     services::ServiceError,
 };
 
@@ -12,4 +14,39 @@ pub fn update_heuristics(
     patch: DecisionHeuristicPatch,
 ) -> Result<SoulConfig, ServiceError> {
     deps.update_soul_config(workspace_root, &patch.into())
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateHeuristicsRequest {
+    pub workspace_root: String,
+    #[serde(default)]
+    pub patch: DecisionHeuristicPatch,
+}
+
+impl UpdateHeuristicsRequest {
+    fn validate(&self) -> Result<(), SoulError> {
+        if self.workspace_root.trim().is_empty() {
+            return Err(SoulError::Validation(
+                "workspace_root must not be empty".to_owned(),
+            ));
+        }
+        if self.patch.replace_all.is_none()
+            && self.patch.upsert.is_empty()
+            && self.patch.remove.is_empty()
+        {
+            return Err(SoulError::Validation(
+                "heuristics endpoint requires replace_all, upsert, or remove operations".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub fn handle_update_heuristics(
+    deps: &SoulDependencies,
+    request: UpdateHeuristicsRequest,
+) -> Result<SoulConfig, SoulError> {
+    request.validate()?;
+    update_heuristics(deps, request.workspace_root, request.patch)
 }
