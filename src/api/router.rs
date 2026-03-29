@@ -116,6 +116,11 @@ pub struct HttpResponse {
     pub body_json: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct HttpDataEnvelope<T> {
+    data: T,
+}
+
 pub fn handle_request(deps: &SoulDependencies, request: HttpRequest<'_>) -> HttpResponse {
     match dispatch_request(deps, request) {
         Ok(response) => response,
@@ -131,19 +136,19 @@ fn dispatch_request(
         (method, path) if method == COMPOSE_ROUTE.method.as_str() && path == COMPOSE_ROUTE.path => {
             let body: crate::domain::ComposeRequest = parse_json(request.body_json)?;
             let context = compose_context(deps, body)?;
-            json_response(200, &context)
+            data_response(200, &context)
         }
         (method, path) if method == EXPLAIN_ROUTE.method.as_str() && path == EXPLAIN_ROUTE.path => {
             let body: crate::domain::ComposeRequest = parse_json(request.body_json)?;
             let report = explain_report(deps, body)?;
-            json_response(200, &report)
+            data_response(200, &report)
         }
         (method, path)
             if method == READ_TRAITS_ROUTE.method.as_str() && path == READ_TRAITS_ROUTE.path =>
         {
             let body: crate::domain::ComposeRequest = parse_json(request.body_json)?;
             let traits = traits_projection(deps, body)?;
-            json_response(200, &traits)
+            data_response(200, &traits)
         }
         (method, path)
             if method == READ_HEURISTICS_ROUTE.method.as_str()
@@ -151,7 +156,7 @@ fn dispatch_request(
         {
             let body: crate::domain::ComposeRequest = parse_json(request.body_json)?;
             let heuristics = heuristics_projection(deps, body)?;
-            json_response(200, &heuristics)
+            data_response(200, &heuristics)
         }
         (method, path)
             if method == UPDATE_TRAITS_ROUTE.method.as_str()
@@ -209,6 +214,18 @@ where
         body_json: serde_json::to_string(value)
             .map_err(|error| SoulError::Internal(error.to_string()))?,
     })
+}
+
+fn data_response<T>(status: u16, value: &T) -> Result<HttpResponse, SoulError>
+where
+    T: Serialize + Clone,
+{
+    json_response(
+        status,
+        &HttpDataEnvelope {
+            data: value.clone(),
+        },
+    )
 }
 
 fn error_response(error: &SoulError) -> HttpResponse {
@@ -338,15 +355,15 @@ mod tests {
         )?;
         let body: Value = serde_json::from_str(&response.body_json)?;
         ensure(
-            body["status_summary"]["compose_mode"] == "normal",
+            body["data"]["status_summary"]["compose_mode"] == "normal",
             format!(
                 "expected normal compose mode, got {:?}",
-                body["status_summary"]["compose_mode"]
+                body["data"]["status_summary"]["compose_mode"]
             ),
         )?;
         ensure(
-            body["agent_id"] == "agent.alpha",
-            format!("expected agent.alpha, got {:?}", body["agent_id"]),
+            body["data"]["agent_id"] == "agent.alpha",
+            format!("expected agent.alpha, got {:?}", body["data"]["agent_id"]),
         )?;
         cleanup_workspace(&workspace)?;
         Ok(())
@@ -392,21 +409,21 @@ mod tests {
         )?;
         let body: Value = serde_json::from_str(&response.body_json)?;
         ensure(
-            body["status_summary"]["compose_mode"] == "degraded",
+            body["data"]["status_summary"]["compose_mode"] == "degraded",
             format!(
                 "expected degraded compose mode, got {:?}",
-                body["status_summary"]["compose_mode"]
+                body["data"]["status_summary"]["compose_mode"]
             ),
         )?;
         ensure(
-            body["inspect"]["status_summary"]["compose_mode"] == "degraded",
+            body["data"]["inspect"]["status_summary"]["compose_mode"] == "degraded",
             format!(
                 "expected degraded inspect mode, got {:?}",
-                body["inspect"]["status_summary"]["compose_mode"]
+                body["data"]["inspect"]["status_summary"]["compose_mode"]
             ),
         )?;
         ensure(
-            body["rendered"]
+            body["data"]["rendered"]
                 .as_str()
                 .unwrap_or_default()
                 .contains("Explain Alpha"),
@@ -454,8 +471,9 @@ mod tests {
             response.status == 200,
             format!("expected 200, got {}", response.status),
         )?;
+        let body: Value = serde_json::from_str(&response.body_json)?;
         let actual: crate::services::explain::InspectTraitProjection =
-            serde_json::from_str(&response.body_json)?;
+            serde_json::from_value(body["data"].clone())?;
         let expected = AppDeps::default()
             .inspect_report(crate::domain::ComposeRequest {
                 workspace_id: workspace.display().to_string(),
@@ -515,8 +533,9 @@ mod tests {
             response.status == 200,
             format!("expected 200, got {}", response.status),
         )?;
+        let body: Value = serde_json::from_str(&response.body_json)?;
         let actual: crate::services::explain::InspectHeuristicProjection =
-            serde_json::from_str(&response.body_json)?;
+            serde_json::from_value(body["data"].clone())?;
         let expected = AppDeps::default()
             .inspect_report(crate::domain::ComposeRequest {
                 workspace_id: workspace.display().to_string(),

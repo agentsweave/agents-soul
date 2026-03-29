@@ -128,6 +128,79 @@ fn transports_share_the_same_core_error_mapping() {
     );
 }
 
+#[test]
+fn api_router_contract_exposes_mutation_endpoints() {
+    let endpoints = api::router::write_endpoints();
+    let paths = endpoints
+        .iter()
+        .map(|endpoint| endpoint.path)
+        .collect::<Vec<_>>();
+    let handlers = endpoints
+        .iter()
+        .map(|endpoint| endpoint.handler)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        paths,
+        vec![
+            "/v1/traits",
+            "/v1/heuristics",
+            "/v1/interactions",
+            "/v1/reset"
+        ]
+    );
+    assert_eq!(
+        handlers,
+        vec![
+            "api::traits::handle_update_traits",
+            "api::heuristics::handle_update_heuristics",
+            "api::interactions::handle_record_interaction",
+            "api::reset::handle_reset_adaptation",
+        ]
+    );
+    assert_eq!(
+        endpoints
+            .iter()
+            .map(|endpoint| endpoint.method.as_str())
+            .collect::<Vec<_>>(),
+        vec!["PATCH", "PATCH", "POST", "POST"]
+    );
+}
+
+#[test]
+fn api_router_contract_exposes_read_endpoints() {
+    let endpoints = api::router::read_endpoints();
+    let paths = endpoints
+        .iter()
+        .map(|endpoint| endpoint.path)
+        .collect::<Vec<_>>();
+    let handlers = endpoints
+        .iter()
+        .map(|endpoint| endpoint.handler)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        paths,
+        vec!["/v1/compose", "/v1/explain", "/v1/traits", "/v1/heuristics"]
+    );
+    assert_eq!(
+        handlers,
+        vec![
+            "api::compose::compose_context",
+            "api::explain::explain_report",
+            "api::traits::traits_projection",
+            "api::heuristics::heuristics_projection",
+        ]
+    );
+    assert_eq!(
+        endpoints
+            .iter()
+            .map(|endpoint| endpoint.method.as_str())
+            .collect::<Vec<_>>(),
+        vec!["POST", "POST", "POST", "POST"]
+    );
+}
+
 fn test_workspace(label: &str) -> PathBuf {
     let suffix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
