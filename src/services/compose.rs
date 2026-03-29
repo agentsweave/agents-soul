@@ -2,7 +2,9 @@ use crate::{
     app::{config::WorkspacePaths, deps::AppDeps},
     domain::{
         BehaviorInputs, BehaviorWarning, BehavioralContext, CURRENT_SCHEMA_VERSION, ComposeMode,
-        ComposeRequest, InputSourceKind, NormalizedInputs, StatusSummary, WarningSeverity,
+        ComposeRequest, IdentifySignals, InputProvenance, InputSourceKind, NormalizedInputs,
+        ReputationSummary, SessionIdentitySnapshot, StatusSummary, VerificationResult,
+        WarningSeverity,
     },
     services::{
         commitments::CommitmentsService, communication::CommunicationRulesService,
@@ -11,7 +13,11 @@ use crate::{
         relationships::RelationshipsService, warnings::WarningService,
     },
     sources::{
-        cache::{CachedFreshness, CachedInputs, write_cached_inputs},
+        ReaderSelection,
+        cache::{
+            CachedFreshness, CachedInputs, cache_stale_warning, read_cached_inputs,
+            write_cached_inputs,
+        },
         normalize::normalize_inputs,
     },
 };
@@ -31,10 +37,22 @@ impl ComposeService {
         let config = deps.load_soul_config(&request.workspace_id)?;
         let effective_overrides =
             deps.load_effective_overrides(&request.workspace_id, &config, &request.agent_id)?;
+        let config_hash = deps.provenance_hasher().config_hash(&config)?;
+        let adaptation_hash = deps
+            .provenance_hasher()
+            .adaptation_hash(&effective_overrides.adaptation_state)?;
 
-        let identity_selection = deps.load_identify_signals(&request, &config)?;
-        let verification_selection = deps.load_registry_verification(&request)?;
-        let reputation_selection = deps.load_registry_reputation(&request)?;
+        let mut identity_selection = deps.load_identify_signals(&request, &config)?;
+        let mut verification_selection = deps.load_registry_verification(&request)?;
+        let mut reputation_selection = deps.load_registry_reputation(&request)?;
+        invalidate_stale_cache_backed_selections(
+            &request,
+            &config_hash,
+            &adaptation_hash,
+            &mut identity_selection,
+            &mut verification_selection,
+            &mut reputation_selection,
+        )?;
         let identity_snapshot = identity_selection
             .value
             .as_ref()
@@ -55,18 +73,9 @@ impl ComposeService {
             reputation_selection.provenance.source,
         ) {
             let freshness = Some(CachedFreshness {
-                config_hash: Some(deps.provenance_hasher().config_hash(&config)?),
-                adaptation_hash: Some(
-                    deps.provenance_hasher()
-                        .adaptation_hash(&effective_overrides.adaptation_state)?,
-                ),
-                identity_fingerprint: identity_snapshot.as_ref().map(|snapshot| {
-                    snapshot.fingerprint.clone().unwrap_or_else(|| {
-                        deps.provenance_hasher()
-                            .identity_fingerprint(snapshot)
-                            .unwrap_or_default()
-                    })
-                }),
+                config_hash: Some(config_hash.clone()),
+                adaptation_hash: Some(adaptation_hash.clone()),
+                identity_fingerprint: cache_identity_fingerprint(deps, identity_snapshot.as_ref())?,
                 registry_verification_at: verification_result
                     .as_ref()
                     .and_then(|verification| verification.verified_at),
@@ -115,126 +124,127 @@ impl ComposeService {
         let compose_mode = ComposeModeService.resolve(&normalized);
         let status_summary = ComposeModeService.build_status_summary(&normalized, compose_mode);
 
-        match compose_mode {
-            ComposeMode::FailClosed => {
-                self.build_fail_closed_context(deps, normalized, status_summary)
-            }
-            ComposeMode::Restricted => {
-                self.build_restricted_context(deps, normalized, status_summary)
-            }
-            _ => self.render_context(deps, normalized, status_summary, compose_mode),
-        }
+        build_variant_context(deps, normalized, compose_mode, status_summary)
     }
+}
 
-    fn build_fail_closed_context(
-        &self,
-        deps: &AppDeps,
-        normalized: NormalizedInputs,
-        status_summary: StatusSummary,
-    ) -> Result<BehavioralContext, ServiceError> {
-        let profile_name = normalized.profile_name.clone();
-        let prompt_prefix = deps.render_prompt_prefix(
-            &normalized.soul_config.templates.prompt_prefix_template,
-            ComposeMode::FailClosed,
-            &profile_name,
-            normalized.soul_config.limits.max_prompt_prefix_chars,
-        )?;
-        let fail_closed_inputs = fail_closed_inputs(&normalized);
-
-        Ok(BehavioralContext {
-            schema_version: CURRENT_SCHEMA_VERSION,
-            agent_id: normalized.agent_id.clone(),
-            profile_name,
-            status_summary,
-            baseline_trait_profile: EffectiveProfileService.derive_baseline(&fail_closed_inputs),
-            trait_profile: EffectiveProfileService
-                .derive(&fail_closed_inputs, ComposeMode::FailClosed),
-            communication_rules: vec![
-                "State the fail-closed state plainly.".to_owned(),
-                "Do not present yourself as an active verified agent.".to_owned(),
-                "Ask for operator intervention before any further action.".to_owned(),
-                "Do not take on new commitments or claim registry validity.".to_owned(),
-            ],
-            decision_rules: vec![
-                "Do not continue normal autonomous operation.".to_owned(),
-                "Decline to take new commitments until the operator restores registry standing."
-                    .to_owned(),
-            ],
-            active_commitments: Vec::new(),
-            relationship_context: Vec::new(),
-            adaptive_notes: Vec::new(),
-            warnings: WarningService.derive(&normalized, ComposeMode::FailClosed),
-            system_prompt_prefix: prompt_prefix,
-            provenance: ProvenanceService.build(deps.provenance_hasher(), &normalized)?,
-        })
+fn build_variant_context(
+    deps: &AppDeps,
+    normalized: NormalizedInputs,
+    compose_mode: ComposeMode,
+    status_summary: StatusSummary,
+) -> Result<BehavioralContext, ServiceError> {
+    match compose_mode {
+        ComposeMode::FailClosed => build_fail_closed_context(deps, normalized, status_summary),
+        ComposeMode::Restricted => build_restricted_context(deps, normalized, status_summary),
+        _ => build_rendered_context(deps, normalized, status_summary, compose_mode),
     }
+}
 
-    fn build_restricted_context(
-        &self,
-        deps: &AppDeps,
-        normalized: NormalizedInputs,
-        status_summary: StatusSummary,
-    ) -> Result<BehavioralContext, ServiceError> {
-        let profile_name = normalized.profile_name.clone();
-        let prompt_prefix = deps.render_prompt_prefix(
-            &normalized.soul_config.templates.prompt_prefix_template,
-            ComposeMode::Restricted,
-            &profile_name,
-            normalized.soul_config.limits.max_prompt_prefix_chars,
-        )?;
-        let restricted_inputs = restricted_inputs(&normalized);
+fn build_fail_closed_context(
+    deps: &AppDeps,
+    normalized: NormalizedInputs,
+    status_summary: StatusSummary,
+) -> Result<BehavioralContext, ServiceError> {
+    let profile_name = normalized.profile_name.clone();
+    let prompt_prefix =
+        render_prompt_prefix(deps, &normalized, ComposeMode::FailClosed, &profile_name)?;
+    let fail_closed_inputs = fail_closed_inputs(&normalized);
 
-        Ok(BehavioralContext {
-            schema_version: CURRENT_SCHEMA_VERSION,
-            agent_id: normalized.agent_id.clone(),
-            profile_name,
-            status_summary,
-            baseline_trait_profile: EffectiveProfileService.derive_baseline(&restricted_inputs),
-            trait_profile: EffectiveProfileService
-                .derive(&restricted_inputs, ComposeMode::Restricted),
-            communication_rules: restricted_communication_rules(&restricted_inputs),
-            decision_rules: restricted_decision_rules(&restricted_inputs),
-            active_commitments: restricted_commitments(&restricted_inputs),
-            relationship_context: restricted_relationships(&restricted_inputs),
-            adaptive_notes: Vec::new(),
-            warnings: WarningService.derive(&normalized, ComposeMode::Restricted),
-            system_prompt_prefix: prompt_prefix,
-            provenance: ProvenanceService.build(deps.provenance_hasher(), &normalized)?,
-        })
-    }
+    Ok(BehavioralContext {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        agent_id: normalized.agent_id.clone(),
+        profile_name,
+        status_summary,
+        baseline_trait_profile: EffectiveProfileService.derive_baseline(&fail_closed_inputs),
+        trait_profile: EffectiveProfileService.derive(&fail_closed_inputs, ComposeMode::FailClosed),
+        communication_rules: vec![
+            "State the fail-closed state plainly.".to_owned(),
+            "Do not present yourself as an active verified agent.".to_owned(),
+            "Ask for operator intervention before any further action.".to_owned(),
+            "Do not take on new commitments or claim registry validity.".to_owned(),
+        ],
+        decision_rules: vec![
+            "Do not continue normal autonomous operation.".to_owned(),
+            "Decline to take new commitments until the operator restores registry standing."
+                .to_owned(),
+        ],
+        active_commitments: Vec::new(),
+        relationship_context: Vec::new(),
+        adaptive_notes: Vec::new(),
+        warnings: WarningService.derive(&normalized, ComposeMode::FailClosed),
+        system_prompt_prefix: prompt_prefix,
+        provenance: ProvenanceService.build(deps.provenance_hasher(), &normalized)?,
+    })
+}
 
-    fn render_context(
-        &self,
-        deps: &AppDeps,
-        normalized: NormalizedInputs,
-        status_summary: StatusSummary,
-        compose_mode: ComposeMode,
-    ) -> Result<BehavioralContext, ServiceError> {
-        let profile_name = normalized.profile_name.clone();
-        let prompt_prefix = deps.render_prompt_prefix(
-            &normalized.soul_config.templates.prompt_prefix_template,
-            compose_mode,
-            &profile_name,
-            normalized.soul_config.limits.max_prompt_prefix_chars,
-        )?;
+fn build_restricted_context(
+    deps: &AppDeps,
+    normalized: NormalizedInputs,
+    status_summary: StatusSummary,
+) -> Result<BehavioralContext, ServiceError> {
+    let profile_name = normalized.profile_name.clone();
+    let prompt_prefix =
+        render_prompt_prefix(deps, &normalized, ComposeMode::Restricted, &profile_name)?;
+    let restricted_inputs = restricted_inputs(&normalized);
 
-        Ok(BehavioralContext {
-            schema_version: CURRENT_SCHEMA_VERSION,
-            agent_id: normalized.agent_id.clone(),
-            profile_name,
-            status_summary,
-            baseline_trait_profile: EffectiveProfileService.derive_baseline(&normalized),
-            trait_profile: EffectiveProfileService.derive(&normalized, compose_mode),
-            communication_rules: CommunicationRulesService.derive(&normalized, compose_mode),
-            decision_rules: DecisionRulesService.derive(&normalized, compose_mode),
-            active_commitments: CommitmentsService.derive(&normalized, compose_mode),
-            relationship_context: RelationshipsService.derive(&normalized, compose_mode),
-            adaptive_notes: normalized.adaptation_state.notes.clone(),
-            warnings: WarningService.derive(&normalized, compose_mode),
-            system_prompt_prefix: prompt_prefix,
-            provenance: ProvenanceService.build(deps.provenance_hasher(), &normalized)?,
-        })
-    }
+    Ok(BehavioralContext {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        agent_id: normalized.agent_id.clone(),
+        profile_name,
+        status_summary,
+        baseline_trait_profile: EffectiveProfileService.derive_baseline(&restricted_inputs),
+        trait_profile: EffectiveProfileService.derive(&restricted_inputs, ComposeMode::Restricted),
+        communication_rules: restricted_communication_rules(&restricted_inputs),
+        decision_rules: restricted_decision_rules(&restricted_inputs),
+        active_commitments: restricted_commitments(&restricted_inputs),
+        relationship_context: restricted_relationships(&restricted_inputs),
+        adaptive_notes: Vec::new(),
+        warnings: WarningService.derive(&normalized, ComposeMode::Restricted),
+        system_prompt_prefix: prompt_prefix,
+        provenance: ProvenanceService.build(deps.provenance_hasher(), &normalized)?,
+    })
+}
+
+fn build_rendered_context(
+    deps: &AppDeps,
+    normalized: NormalizedInputs,
+    status_summary: StatusSummary,
+    compose_mode: ComposeMode,
+) -> Result<BehavioralContext, ServiceError> {
+    let profile_name = normalized.profile_name.clone();
+    let prompt_prefix = render_prompt_prefix(deps, &normalized, compose_mode, &profile_name)?;
+
+    Ok(BehavioralContext {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        agent_id: normalized.agent_id.clone(),
+        profile_name,
+        status_summary,
+        baseline_trait_profile: EffectiveProfileService.derive_baseline(&normalized),
+        trait_profile: EffectiveProfileService.derive(&normalized, compose_mode),
+        communication_rules: CommunicationRulesService.derive(&normalized, compose_mode),
+        decision_rules: DecisionRulesService.derive(&normalized, compose_mode),
+        active_commitments: CommitmentsService.derive(&normalized, compose_mode),
+        relationship_context: RelationshipsService.derive(&normalized, compose_mode),
+        adaptive_notes: normalized.adaptation_state.notes.clone(),
+        warnings: WarningService.derive(&normalized, compose_mode),
+        system_prompt_prefix: prompt_prefix,
+        provenance: ProvenanceService.build(deps.provenance_hasher(), &normalized)?,
+    })
+}
+
+fn render_prompt_prefix(
+    deps: &AppDeps,
+    normalized: &NormalizedInputs,
+    compose_mode: ComposeMode,
+    profile_name: &str,
+) -> Result<String, ServiceError> {
+    deps.render_prompt_prefix(
+        &normalized.soul_config.templates.prompt_prefix_template,
+        compose_mode,
+        profile_name,
+        normalized.soul_config.limits.max_prompt_prefix_chars,
+    )
 }
 
 fn fail_closed_inputs(normalized: &NormalizedInputs) -> NormalizedInputs {
@@ -297,6 +307,107 @@ fn should_refresh_context_cache(
         .any(|source| matches!(source, InputSourceKind::Live | InputSourceKind::Explicit))
 }
 
+fn cache_identity_fingerprint(
+    deps: &AppDeps,
+    snapshot: Option<&SessionIdentitySnapshot>,
+) -> Result<Option<String>, crate::domain::SoulError> {
+    let Some(snapshot) = snapshot else {
+        return Ok(None);
+    };
+
+    match snapshot.fingerprint.clone() {
+        Some(fingerprint) => Ok(Some(fingerprint)),
+        None => deps
+            .provenance_hasher()
+            .identity_fingerprint(snapshot)
+            .map(Some),
+    }
+}
+
+fn invalidate_stale_cache_backed_selections(
+    request: &ComposeRequest,
+    config_hash: &str,
+    adaptation_hash: &str,
+    identity_selection: &mut ReaderSelection<IdentifySignals>,
+    verification_selection: &mut ReaderSelection<VerificationResult>,
+    reputation_selection: &mut ReaderSelection<ReputationSummary>,
+) -> Result<(), crate::domain::SoulError> {
+    if !selection_is_cache_backed(identity_selection)
+        && !selection_is_cache_backed(verification_selection)
+        && !selection_is_cache_backed(reputation_selection)
+    {
+        return Ok(());
+    }
+
+    let cached = read_cached_inputs(request)?;
+    let stale_reason = cached.cached_inputs.as_ref().and_then(|cached_inputs| {
+        stale_reason_against_current_inputs(cached_inputs, config_hash, adaptation_hash)
+    });
+
+    let Some(reason) = stale_reason else {
+        return Ok(());
+    };
+
+    let warning = cache_stale_warning(
+        &WorkspacePaths::new(&request.workspace_id).context_cache_path(),
+        &reason,
+    );
+    invalidate_cache_selection(
+        identity_selection,
+        "identity snapshot unavailable",
+        warning.clone(),
+    );
+    invalidate_cache_selection(
+        verification_selection,
+        "registry verification unavailable",
+        warning.clone(),
+    );
+    invalidate_cache_selection(
+        reputation_selection,
+        "registry reputation unavailable",
+        warning,
+    );
+    Ok(())
+}
+
+fn stale_reason_against_current_inputs(
+    cached_inputs: &CachedInputs,
+    config_hash: &str,
+    adaptation_hash: &str,
+) -> Option<String> {
+    let freshness = cached_inputs.freshness.as_ref()?;
+
+    if freshness.config_hash.as_deref() != Some(config_hash) {
+        return Some("soul config changed".to_owned());
+    }
+
+    if freshness.adaptation_hash.as_deref() != Some(adaptation_hash) {
+        return Some("adaptation state changed".to_owned());
+    }
+
+    None
+}
+
+fn selection_is_cache_backed<T>(selection: &ReaderSelection<T>) -> bool {
+    matches!(selection.provenance.source, InputSourceKind::Cache)
+}
+
+fn invalidate_cache_selection<T>(
+    selection: &mut ReaderSelection<T>,
+    unavailable_detail: &str,
+    warning: BehaviorWarning,
+) {
+    if !selection_is_cache_backed(selection) {
+        return;
+    }
+
+    let mut unavailable =
+        ReaderSelection::unavailable(InputProvenance::unavailable(unavailable_detail));
+    unavailable.warnings = selection.warnings.clone();
+    unavailable.warnings.push(warning);
+    *selection = unavailable;
+}
+
 fn cache_write_warning(
     request: &ComposeRequest,
     error: crate::domain::SoulError,
@@ -335,7 +446,9 @@ mod tests {
             SessionIdentitySnapshot, SoulConfig, SoulError, VerificationResult,
         },
         services::{provenance::ProvenanceHasher, templates::PromptTemplateRenderer},
-        sources::cache::{CachedInputs, read_cached_inputs_path},
+        sources::cache::{
+            CachedFreshness, CachedInputs, read_cached_inputs_path, write_cached_inputs,
+        },
         sources::normalize::normalize_inputs,
         storage::sqlite::{AdaptationStateRecord, open_database, upsert_adaptation_state},
     };
@@ -866,6 +979,7 @@ mod tests {
             paths.context_cache_path(),
             serde_json::to_vec(&CachedInputs {
                 cache_key: None,
+                freshness: None,
                 identity_snapshot: Some(SessionIdentitySnapshot {
                     agent_id: "agent.alpha".to_owned(),
                     display_name: Some("Alpha".to_owned()),
@@ -980,6 +1094,140 @@ mod tests {
         assert!(!context.status_summary.identity_loaded);
         assert!(!context.status_summary.registry_verified);
         assert!(context.adaptive_notes.is_empty());
+
+        cleanup_workspace(&workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn compose_ignores_cache_when_config_hash_is_stale() -> Result<(), Box<dyn Error>> {
+        let workspace = test_workspace("compose-cache-stale-config");
+        fs::create_dir_all(workspace.join(".soul"))?;
+        write_soul_config(&workspace, "agent.alpha", "Alpha")?;
+        let deps = crate::app::deps::AppDeps::default().with_provenance_hasher(StubHasher);
+        let request = ComposeRequest {
+            workspace_id: workspace.display().to_string(),
+            agent_id: "agent.alpha".to_owned(),
+            session_id: "session.alpha".to_owned(),
+            identity_snapshot_path: None,
+            registry_verification_path: None,
+            registry_reputation_path: None,
+            include_reputation: true,
+            include_relationships: true,
+            include_commitments: true,
+        };
+        write_cached_inputs(
+            &request,
+            &CachedInputs {
+                cache_key: None,
+                freshness: Some(CachedFreshness {
+                    config_hash: Some("cfg_stale".to_owned()),
+                    adaptation_hash: Some("adp_deps".to_owned()),
+                    identity_fingerprint: Some("fingerprint-from-identify".to_owned()),
+                    registry_verification_at: None,
+                }),
+                identity_snapshot: Some(SessionIdentitySnapshot {
+                    agent_id: "agent.alpha".to_owned(),
+                    display_name: Some("Alpha".to_owned()),
+                    recovery_state: RecoveryState::Healthy,
+                    active_commitments: vec!["cached commitment".to_owned()],
+                    durable_preferences: Vec::new(),
+                    relationship_markers: Vec::new(),
+                    facts: Vec::new(),
+                    warnings: Vec::new(),
+                    fingerprint: Some("fingerprint-from-identify".to_owned()),
+                }),
+                verification_result: Some(VerificationResult {
+                    status: RegistryStatus::Active,
+                    standing_level: Some("good".to_owned()),
+                    reason_code: None,
+                    verified_at: None,
+                }),
+                reputation_summary: None,
+            },
+        )?;
+
+        let context = ComposeService.compose(&deps, request)?;
+
+        assert_eq!(
+            context.status_summary.compose_mode,
+            ComposeMode::BaselineOnly
+        );
+        assert!(!context.status_summary.identity_loaded);
+        assert!(!context.status_summary.registry_verified);
+        assert!(
+            context
+                .warnings
+                .iter()
+                .any(|warning| warning.code == "context_cache_stale")
+        );
+
+        cleanup_workspace(&workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn compose_ignores_cache_when_adaptation_hash_is_stale() -> Result<(), Box<dyn Error>> {
+        let workspace = test_workspace("compose-cache-stale-adaptation");
+        fs::create_dir_all(workspace.join(".soul"))?;
+        write_soul_config(&workspace, "agent.alpha", "Alpha")?;
+        let deps = crate::app::deps::AppDeps::default().with_provenance_hasher(StubHasher);
+        let request = ComposeRequest {
+            workspace_id: workspace.display().to_string(),
+            agent_id: "agent.alpha".to_owned(),
+            session_id: "session.alpha".to_owned(),
+            identity_snapshot_path: None,
+            registry_verification_path: None,
+            registry_reputation_path: None,
+            include_reputation: true,
+            include_relationships: true,
+            include_commitments: true,
+        };
+        write_cached_inputs(
+            &request,
+            &CachedInputs {
+                cache_key: None,
+                freshness: Some(CachedFreshness {
+                    config_hash: Some("cfg_deps".to_owned()),
+                    adaptation_hash: Some("adp_stale".to_owned()),
+                    identity_fingerprint: Some("fingerprint-from-identify".to_owned()),
+                    registry_verification_at: None,
+                }),
+                identity_snapshot: Some(SessionIdentitySnapshot {
+                    agent_id: "agent.alpha".to_owned(),
+                    display_name: Some("Alpha".to_owned()),
+                    recovery_state: RecoveryState::Healthy,
+                    active_commitments: vec!["cached commitment".to_owned()],
+                    durable_preferences: Vec::new(),
+                    relationship_markers: Vec::new(),
+                    facts: Vec::new(),
+                    warnings: Vec::new(),
+                    fingerprint: Some("fingerprint-from-identify".to_owned()),
+                }),
+                verification_result: Some(VerificationResult {
+                    status: RegistryStatus::Active,
+                    standing_level: Some("good".to_owned()),
+                    reason_code: None,
+                    verified_at: None,
+                }),
+                reputation_summary: None,
+            },
+        )?;
+
+        let context = ComposeService.compose(&deps, request)?;
+
+        assert_eq!(
+            context.status_summary.compose_mode,
+            ComposeMode::BaselineOnly
+        );
+        assert!(!context.status_summary.identity_loaded);
+        assert!(!context.status_summary.registry_verified);
+        assert!(
+            context
+                .warnings
+                .iter()
+                .any(|warning| warning.code == "context_cache_stale")
+        );
 
         cleanup_workspace(&workspace)?;
         Ok(())
