@@ -60,3 +60,53 @@ Workspace contract still requires:
 - `src/adaptation`: bounded adaptation helpers
 - `src/storage`: persistence and fixtures
 - `src/cli`, `src/api`, `src/mcp`: thin transport layers
+
+
+## Runtime Contract
+The current runtime seam is:
+- `main` -> `SoulRuntime::run`
+- transport entrypoint -> `AppDeps::compose_context`
+- `AppDeps` -> `ComposeService::compose`
+- `ComposeService` -> normalized inputs -> `BehavioralContext`
+This boundary exists so CLI, REST, and MCP stay thin and all behavior flows through one shared compose path.
+`AppDeps` is the authoritative bootstrap boundary for:
+- workspace config loading
+- adaptation state loading
+- identify / registry reads
+- template rendering
+- clock access and provenance hashing
+- transport error mapping via `map_soul_error`
+Failure semantics are centralized in `SoulError` plus `map_soul_error`, so CLI exit codes, HTTP responses, and MCP tool failures stay consistent across transports.
+
+## Validation Commands
+
+Use these command tiers as the canonical definition of done for local work and CI:
+
+- Fast unit slice:
+  - `cargo test services::templates:: -- --nocapture`
+  - `cargo test --lib`
+- Integration and parity slice:
+  - `cargo test --test compose_modes -- --nocapture`
+  - `cargo test --test transport_parity -- --nocapture`
+  - `cargo test --test rendering_snapshots -- --nocapture`
+- Full verification gate:
+  - `cargo fmt --check`
+  - `cargo check --all-targets`
+  - `cargo test --all-targets`
+  - `ubs --diff .`
+
+## Fixture And Snapshot Flow
+
+- `tests/fixtures/compose_modes/` contains the explicit identity and registry JSON used by
+  compose-mode and transport-parity tests.
+- `tests/fixtures/rendering/` contains the golden Markdown snapshots for end-to-end prompt,
+  full-context, and explain rendering.
+- `tests/transport_parity.rs` compares the stable CLI, REST, and MCP payload slices and
+  normalizes float serialization so the assertions track semantic parity instead of JSON
+  encoding noise.
+- `tests/rendering_snapshots.rs` re-renders the `normal`, `restricted`, `degraded`, and
+  `fail_closed` cases into the snapshot fixtures.
+- To refresh rendering fixtures intentionally, run:
+  - `UPDATE_SNAPSHOTS=1 cargo test --test rendering_snapshots -- --nocapture`
+- After updating snapshots, rerun the integration/parity slice and then the full verification
+  gate so spacing, escaping, and transport drift regressions are caught before review.

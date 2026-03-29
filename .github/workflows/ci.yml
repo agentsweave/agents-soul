@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Check
+        run: cargo check --all-targets
+
+      - name: Compose modes
+        run: cargo test --test compose_modes -- --nocapture
+
+      - name: Transport parity
+        run: cargo test --test transport_parity -- --nocapture
+
+      - name: Rendering snapshots
+        run: cargo test --test rendering_snapshots -- --nocapture
+
+      - name: Full suite
+        run: cargo test --all-targets
