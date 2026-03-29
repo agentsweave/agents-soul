@@ -7,7 +7,7 @@ use std::{
 
 use agents_soul::{
     ComposeRequest, SoulDependencies,
-    domain::{SoulConfig, SourceConfig},
+    domain::{PersonalityProfilePatch, SoulConfig, SourceConfig},
     mcp::tools,
 };
 use chrono::{DateTime, TimeZone, Utc};
@@ -78,6 +78,82 @@ fn mcp_explain_tool_matches_shared_explain_report() -> Result<(), Box<dyn Error>
             )
         },
     )
+}
+
+#[test]
+fn mcp_traits_tool_matches_shared_trait_projection() -> Result<(), Box<dyn Error>> {
+    with_request(
+        "mcp-traits",
+        Some("identity_healthy.json"),
+        Some("verification_active.json"),
+        |deps, request| {
+            let expected = deps.inspect_report(request.clone())?.traits_only();
+            let actual = tools::get_traits(deps, request)?;
+
+            ensure(
+                actual == expected,
+                "mcp traits projection diverged from shared inspect output".to_owned(),
+            )
+        },
+    )
+}
+
+#[test]
+fn mcp_heuristics_tool_matches_shared_heuristic_projection() -> Result<(), Box<dyn Error>> {
+    with_request(
+        "mcp-heuristics",
+        Some("identity_healthy.json"),
+        Some("verification_active.json"),
+        |deps, request| {
+            let expected = deps.inspect_report(request.clone())?.heuristics_only();
+            let actual = tools::get_heuristics(deps, request)?;
+
+            ensure(
+                actual == expected,
+                "mcp heuristics projection diverged from shared inspect output".to_owned(),
+            )
+        },
+    )
+}
+
+#[test]
+fn mcp_update_traits_tool_updates_workspace_config() -> Result<(), Box<dyn Error>> {
+    let workspace = test_workspace("mcp-update-traits");
+    let result = (|| {
+        fs::create_dir_all(workspace.join("identity-live"))?;
+        write_soul_config(&workspace, "agent.alpha", "Alpha")?;
+
+        let patch = PersonalityProfilePatch {
+            verbosity: Some(0.83),
+            warmth: Some(0.51),
+            ..PersonalityProfilePatch::default()
+        };
+        let deps = SoulDependencies::default();
+        let updated = tools::update_traits(&deps, &workspace, patch)?;
+        let reloaded = deps.load_soul_config(&workspace.display().to_string())?;
+
+        ensure(
+            (updated.trait_baseline.verbosity - 0.83).abs() <= f32::EPSILON,
+            format!(
+                "updated config verbosity mismatch: {:?}",
+                updated.trait_baseline.verbosity
+            ),
+        )?;
+        ensure(
+            (updated.trait_baseline.warmth - 0.51).abs() <= f32::EPSILON,
+            format!(
+                "updated config warmth mismatch: {:?}",
+                updated.trait_baseline.warmth
+            ),
+        )?;
+        ensure(
+            updated == reloaded,
+            "trait update did not persist to workspace config".to_owned(),
+        )
+    })();
+
+    cleanup_workspace(&workspace)?;
+    result
 }
 
 fn with_request<F>(

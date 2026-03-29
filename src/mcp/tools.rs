@@ -11,7 +11,10 @@ use crate::{
         BehavioralContext, ComposeRequest, PersonalityProfilePatch, SoulConfig, SoulConfigPatch,
         SoulError,
     },
-    services::{ServiceError, explain::ExplainReport},
+    services::{
+        ServiceError,
+        explain::{ExplainReport, InspectHeuristicProjection, InspectTraitProjection},
+    },
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -43,6 +46,22 @@ pub fn explain_report(
     request: ComposeRequest,
 ) -> Result<ExplainReport, ServiceError> {
     deps.explain_report(request)
+}
+
+pub fn get_traits(
+    deps: &SoulDependencies,
+    request: ComposeRequest,
+) -> Result<InspectTraitProjection, ServiceError> {
+    deps.inspect_report(request)
+        .map(|report| report.traits_only())
+}
+
+pub fn get_heuristics(
+    deps: &SoulDependencies,
+    request: ComposeRequest,
+) -> Result<InspectHeuristicProjection, ServiceError> {
+    deps.inspect_report(request)
+        .map(|report| report.heuristics_only())
 }
 
 pub fn map_compose_error(error: &SoulError) -> SoulTransportError {
