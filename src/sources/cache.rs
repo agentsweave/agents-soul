@@ -1,5 +1,6 @@
 use std::{fs, path::Path};
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -8,12 +9,27 @@ use crate::{
         BehaviorWarning, ComposeRequest, ReputationSummary, SessionIdentitySnapshot, SoulError,
         VerificationResult, WarningSeverity,
     },
+    services::provenance::{ProvenanceHasher, StableProvenanceHasher},
 };
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CachedFreshness {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptation_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_verification_at: Option<DateTime<Utc>>,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CachedInputs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness: Option<CachedFreshness>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_snapshot: Option<SessionIdentitySnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -157,6 +173,13 @@ fn read_cached_inputs_path_with_key(
         }),
     }
 
+    if let Some(reason) = stale_cached_inputs_reason(&cached_inputs)? {
+        return Ok(CacheReadResult {
+            cached_inputs: None,
+            warnings: vec![cache_stale_warning(path, &reason)],
+        });
+    }
+
     Ok(CacheReadResult {
         cached_inputs: Some(cached_inputs),
         warnings,
@@ -192,11 +215,71 @@ fn write_cached_inputs_path_with_key(
     write_cached_inputs_path(path, &payload)
 }
 
+pub fn cache_stale_warning(path: &Path, reason: &str) -> BehaviorWarning {
+    BehaviorWarning {
+        severity: WarningSeverity::Caution,
+        code: "context_cache_stale".to_owned(),
+        message: format!(
+            "Context cache at `{}` is stale ({reason}) and was bypassed.",
+            path.display()
+        ),
+    }
+}
+
+fn stale_cached_inputs_reason(cached_inputs: &CachedInputs) -> Result<Option<String>, SoulError> {
+    let Some(freshness) = cached_inputs.freshness.as_ref() else {
+        return Ok(Some("missing freshness metadata".to_owned()));
+    };
+
+    if let Some(snapshot) = cached_inputs.identity_snapshot.as_ref() {
+        let fingerprint = match snapshot.fingerprint.clone() {
+            Some(fingerprint) => fingerprint,
+            None => StableProvenanceHasher.identity_fingerprint(snapshot)?,
+        };
+
+        match freshness.identity_fingerprint.as_deref() {
+            Some(expected) if expected == fingerprint => {}
+            Some(_) => return Ok(Some("identity inputs changed".to_owned())),
+            None => return Ok(Some("identity freshness metadata missing".to_owned())),
+        }
+    }
+
+    if cached_inputs.reputation_summary.is_some() && cached_inputs.verification_result.is_none() {
+        return Ok(Some("registry freshness metadata missing".to_owned()));
+    }
+
+    if cached_inputs.verification_result.is_some() || cached_inputs.reputation_summary.is_some() {
+        let cached_verified_at = cached_inputs
+            .verification_result
+            .as_ref()
+            .and_then(|verification| verification.verified_at);
+        if freshness.registry_verification_at != cached_verified_at {
+            return Ok(Some("registry inputs changed".to_owned()));
+        }
+    }
+
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::domain::ComposeRequest;
+    use std::{
+        error::Error,
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
-    use super::context_cache_key;
+    use chrono::{TimeZone, Utc};
+
+    use crate::domain::{
+        ComposeRequest, RecoveryState, RegistryStatus, SessionIdentitySnapshot, VerificationResult,
+    };
+
+    use super::{
+        CachedFreshness, CachedInputs, context_cache_key, read_cached_inputs_path,
+        write_cached_inputs_path,
+    };
 
     #[test]
     fn context_cache_key_is_stable_for_same_request_provenance() {
@@ -218,5 +301,144 @@ mod tests {
         second.registry_reputation_path = Some("/tmp/a/rep-v2.json".to_owned());
 
         assert_ne!(context_cache_key(&first), context_cache_key(&second));
+    }
+
+    #[test]
+    fn read_cached_inputs_bypasses_legacy_cache_without_freshness() -> Result<(), Box<dyn Error>> {
+        let path = test_cache_path("missing-freshness");
+        write_cached_inputs_path(
+            &path,
+            &CachedInputs {
+                cache_key: None,
+                freshness: None,
+                identity_snapshot: Some(SessionIdentitySnapshot {
+                    agent_id: "alpha".to_owned(),
+                    display_name: Some("Alpha".to_owned()),
+                    recovery_state: RecoveryState::Healthy,
+                    active_commitments: vec!["cache".to_owned()],
+                    durable_preferences: Vec::new(),
+                    relationship_markers: Vec::new(),
+                    facts: Vec::new(),
+                    warnings: Vec::new(),
+                    fingerprint: None,
+                }),
+                verification_result: None,
+                reputation_summary: None,
+            },
+        )?;
+
+        let result = read_cached_inputs_path(&path)?;
+        assert!(result.cached_inputs.is_none());
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.code == "context_cache_stale")
+        );
+
+        cleanup_path(&path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn read_cached_inputs_bypasses_identity_fingerprint_mismatch() -> Result<(), Box<dyn Error>> {
+        let path = test_cache_path("identity-stale");
+        write_cached_inputs_path(
+            &path,
+            &CachedInputs {
+                cache_key: None,
+                freshness: Some(CachedFreshness {
+                    config_hash: Some("cfg".to_owned()),
+                    adaptation_hash: Some("adp".to_owned()),
+                    identity_fingerprint: Some("id_old".to_owned()),
+                    registry_verification_at: None,
+                }),
+                identity_snapshot: Some(SessionIdentitySnapshot {
+                    agent_id: "alpha".to_owned(),
+                    display_name: Some("Alpha".to_owned()),
+                    recovery_state: RecoveryState::Healthy,
+                    active_commitments: vec!["cache".to_owned()],
+                    durable_preferences: Vec::new(),
+                    relationship_markers: Vec::new(),
+                    facts: Vec::new(),
+                    warnings: Vec::new(),
+                    fingerprint: Some("id_new".to_owned()),
+                }),
+                verification_result: None,
+                reputation_summary: None,
+            },
+        )?;
+
+        let result = read_cached_inputs_path(&path)?;
+        assert!(result.cached_inputs.is_none());
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.code == "context_cache_stale")
+        );
+
+        cleanup_path(&path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn read_cached_inputs_bypasses_registry_timestamp_mismatch() -> Result<(), Box<dyn Error>> {
+        let path = test_cache_path("registry-stale");
+        let verified_at = Utc
+            .with_ymd_and_hms(2026, 3, 29, 12, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        write_cached_inputs_path(
+            &path,
+            &CachedInputs {
+                cache_key: None,
+                freshness: Some(CachedFreshness {
+                    config_hash: Some("cfg".to_owned()),
+                    adaptation_hash: Some("adp".to_owned()),
+                    identity_fingerprint: None,
+                    registry_verification_at: Some(
+                        Utc.with_ymd_and_hms(2026, 3, 28, 12, 0, 0)
+                            .single()
+                            .expect("valid timestamp"),
+                    ),
+                }),
+                identity_snapshot: None,
+                verification_result: Some(VerificationResult {
+                    status: RegistryStatus::Active,
+                    standing_level: Some("good".to_owned()),
+                    reason_code: None,
+                    verified_at: Some(verified_at),
+                }),
+                reputation_summary: None,
+            },
+        )?;
+
+        let result = read_cached_inputs_path(&path)?;
+        assert!(result.cached_inputs.is_none());
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.code == "context_cache_stale")
+        );
+
+        cleanup_path(&path)?;
+        Ok(())
+    }
+
+    fn test_cache_path(label: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("agents-soul-cache-{label}-{suffix}.json"))
+    }
+
+    fn cleanup_path(path: &PathBuf) -> Result<(), Box<dyn Error>> {
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+        Ok(())
     }
 }
