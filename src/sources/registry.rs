@@ -293,6 +293,12 @@ impl RealRegistryAdapter {
             });
         }
 
+        if let Ok(snapshot) = serde_json::from_str::<RegistrySnapshot>(content) {
+            if let Some(standing) = snapshot.standing {
+                return Ok(standing);
+            }
+        }
+
         Err(SoulError::UpstreamInvalid {
             input: "agents-registry-standing",
             message: "unsupported registry standing payload".into(),
@@ -338,6 +344,12 @@ impl RealRegistryAdapter {
             return envelope.data.reputation_summary.into_soul_reputation();
         }
 
+        if let Ok(snapshot) = serde_json::from_str::<RegistrySnapshot>(content) {
+            if let Some(reputation) = snapshot.reputation {
+                return Ok(reputation);
+            }
+        }
+
         Err(SoulError::UpstreamInvalid {
             input: "agents-registry-reputation",
             message: "unsupported registry reputation payload".into(),
@@ -355,6 +367,12 @@ impl RealRegistryAdapter {
             return Ok(envelope.data.into_soul_snapshot());
         }
 
+        if let Ok(snapshot) = serde_json::from_str::<RegistrySnapshot>(content) {
+            if snapshot.standing.is_some() || snapshot.reputation.is_some() {
+                return Ok(snapshot);
+            }
+        }
+
         if let Ok(verification) = serde_json::from_str::<RegistryVerificationCompat>(content) {
             return verification.into_soul_snapshot();
         }
@@ -363,10 +381,6 @@ impl RealRegistryAdapter {
             serde_json::from_str::<RegistryEnvelopeCompat<RegistryVerificationCompat>>(content)
         {
             return envelope.data.into_soul_snapshot();
-        }
-
-        if let Ok(snapshot) = serde_json::from_str::<RegistrySnapshot>(content) {
-            return Ok(snapshot);
         }
 
         Err(SoulError::UpstreamInvalid {

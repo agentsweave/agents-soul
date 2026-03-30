@@ -12,11 +12,11 @@ use agents_soul::{
 };
 
 const IDENTIFY_EXPORT_FIXTURE: &str =
-    include_str!("../../agents-identify/tests/fixtures/healthy/export-downstream-context.json");
+    include_str!("../../ai/tests/fixtures/healthy/export-downstream-context.json");
 const REGISTRY_AUTHORITY_FIXTURE: &str =
-    include_str!("../../agents-registry/tests/fixtures/registry_agent_record.json");
+    include_str!("../../ar/tests/fixtures/registry_agent_record.json");
 const REGISTRY_VERIFICATION_ENVELOPE_FIXTURE: &str =
-    include_str!("../../agents-registry/tests/fixtures/verification_envelope_mismatch.json");
+    include_str!("../../ar/tests/fixtures/verification_envelope_mismatch.json");
 const HEALTHY_SOUL_CONFIG: &str = include_str!("../examples/workspaces/healthy/soul.toml");
 
 #[test]
