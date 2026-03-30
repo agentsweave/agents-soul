@@ -3,10 +3,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
+
 use crate::{
     domain::{
         ComposeRequest, InputProvenance, RegistryReputation, RegistrySnapshot, RegistryStanding,
-        ReputationSummary, SoulError, VerificationResult,
+        RegistryStatus, ReputationSummary, SoulError, VerificationResult,
     },
     sources::{ReaderSelection, cache::read_cached_inputs},
 };
@@ -256,23 +259,119 @@ impl RealRegistryAdapter {
     }
 
     pub fn parse_verification(&self, content: &str) -> Result<RegistryStanding, SoulError> {
-        serde_json::from_str(content).map_err(|error| SoulError::UpstreamInvalid {
+        if let Ok(verification) = serde_json::from_str::<RegistryStanding>(content) {
+            return Ok(verification);
+        }
+
+        if let Ok(envelope) =
+            serde_json::from_str::<RegistryEnvelopeCompat<RegistryVerificationCompat>>(content)
+        {
+            return envelope.data.into_soul_verification();
+        }
+
+        if let Ok(verification) = serde_json::from_str::<RegistryVerificationCompat>(content) {
+            return verification.into_soul_verification();
+        }
+
+        if let Ok(record) = serde_json::from_str::<RegistryAuthorityCompat>(content) {
+            return record.into_soul_snapshot().standing.ok_or_else(|| {
+                SoulError::UpstreamInvalid {
+                    input: "agents-registry-standing",
+                    message: "authority record did not include standing".into(),
+                }
+            });
+        }
+
+        if let Ok(envelope) =
+            serde_json::from_str::<RegistryEnvelopeCompat<RegistryAuthorityCompat>>(content)
+        {
+            return envelope.data.into_soul_snapshot().standing.ok_or_else(|| {
+                SoulError::UpstreamInvalid {
+                    input: "agents-registry-standing",
+                    message: "authority record envelope did not include standing".into(),
+                }
+            });
+        }
+
+        Err(SoulError::UpstreamInvalid {
             input: "agents-registry-standing",
-            message: error.to_string(),
+            message: "unsupported registry standing payload".into(),
         })
     }
 
     pub fn parse_reputation(&self, content: &str) -> Result<RegistryReputation, SoulError> {
-        serde_json::from_str(content).map_err(|error| SoulError::UpstreamInvalid {
+        if let Ok(reputation) = serde_json::from_str::<RegistryReputation>(content) {
+            return Ok(reputation);
+        }
+
+        if let Ok(envelope) =
+            serde_json::from_str::<RegistryEnvelopeCompat<RegistryReputationCompat>>(content)
+        {
+            return envelope.data.into_soul_reputation();
+        }
+
+        if let Ok(reputation) = serde_json::from_str::<RegistryReputationCompat>(content) {
+            return reputation.into_soul_reputation();
+        }
+
+        if let Ok(envelope) =
+            serde_json::from_str::<RegistryEnvelopeCompat<RegistryVerificationCompat>>(content)
+        {
+            if let Some(reputation) = envelope.data.reputation_summary {
+                return reputation.into_soul_reputation();
+            }
+        }
+
+        if let Ok(verification) = serde_json::from_str::<RegistryVerificationCompat>(content) {
+            if let Some(reputation) = verification.reputation_summary {
+                return reputation.into_soul_reputation();
+            }
+        }
+
+        if let Ok(record) = serde_json::from_str::<RegistryAuthorityCompat>(content) {
+            return record.reputation_summary.into_soul_reputation();
+        }
+
+        if let Ok(envelope) =
+            serde_json::from_str::<RegistryEnvelopeCompat<RegistryAuthorityCompat>>(content)
+        {
+            return envelope.data.reputation_summary.into_soul_reputation();
+        }
+
+        Err(SoulError::UpstreamInvalid {
             input: "agents-registry-reputation",
-            message: error.to_string(),
+            message: "unsupported registry reputation payload".into(),
         })
     }
 
     pub fn parse_snapshot(&self, content: &str) -> Result<RegistrySnapshot, SoulError> {
-        serde_json::from_str(content).map_err(|error| SoulError::UpstreamInvalid {
+        if let Ok(record) = serde_json::from_str::<RegistryAuthorityCompat>(content) {
+            return Ok(record.into_soul_snapshot());
+        }
+
+        if let Ok(envelope) =
+            serde_json::from_str::<RegistryEnvelopeCompat<RegistryAuthorityCompat>>(content)
+        {
+            return Ok(envelope.data.into_soul_snapshot());
+        }
+
+        if let Ok(verification) = serde_json::from_str::<RegistryVerificationCompat>(content) {
+            return verification.into_soul_snapshot();
+        }
+
+        if let Ok(envelope) =
+            serde_json::from_str::<RegistryEnvelopeCompat<RegistryVerificationCompat>>(content)
+        {
+            return envelope.data.into_soul_snapshot();
+        }
+
+        if let Ok(snapshot) = serde_json::from_str::<RegistrySnapshot>(content) {
+            return Ok(snapshot);
+        }
+
+        Err(SoulError::UpstreamInvalid {
             input: "agents-registry",
-            message: error.to_string(),
+            message: "unsupported registry snapshot payload".into(),
         })
     }
 
@@ -283,6 +382,154 @@ impl RealRegistryAdapter {
             .iter()
             .map(|candidate| root.join(candidate))
             .find(|candidate| candidate.is_file())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RegistryEnvelopeCompat<T> {
+    data: T,
+}
+
+#[derive(Debug, Deserialize)]
+struct RegistryVerificationCompat {
+    official_status: Option<RegistryStatus>,
+    #[serde(default)]
+    public_standing: Option<String>,
+    #[serde(default)]
+    reason_code: Option<String>,
+    #[serde(default)]
+    verified_at: Option<String>,
+    #[serde(default)]
+    reputation_summary: Option<RegistryReputationCompat>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RegistryAuthorityCompat {
+    official_status: RegistryStatus,
+    #[serde(default)]
+    public_standing: Option<String>,
+    #[serde(default)]
+    suspension_reason: Option<String>,
+    updated_at: String,
+    reputation_summary: RegistryReputationCompat,
+}
+
+#[derive(Debug, Deserialize)]
+struct RegistryReputationCompat {
+    #[serde(default)]
+    score_total: Option<f32>,
+    #[serde(default)]
+    score_recent_30d: Option<f32>,
+    #[serde(default)]
+    last_event_at: Option<String>,
+    #[serde(default)]
+    public_standing: Option<String>,
+    #[serde(default)]
+    trend: Option<String>,
+    #[serde(default)]
+    category_breakdown: Vec<RegistryCategoryCompat>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RegistryCategoryCompat {
+    category: String,
+    score_total: f32,
+}
+
+impl RegistryVerificationCompat {
+    fn into_soul_verification(self) -> Result<RegistryStanding, SoulError> {
+        let status = self.official_status.ok_or_else(|| SoulError::UpstreamInvalid {
+            input: "agents-registry-standing",
+            message: "verification payload is missing `official_status`".into(),
+        })?;
+        Ok(RegistryStanding {
+            status,
+            standing_level: self.public_standing,
+            reason_code: self.reason_code,
+            verified_at: parse_optional_timestamp("agents-registry-standing", self.verified_at)?,
+        })
+    }
+
+    fn into_soul_snapshot(self) -> Result<RegistrySnapshot, SoulError> {
+        let standing = RegistryStanding {
+            status: self.official_status.ok_or_else(|| SoulError::UpstreamInvalid {
+                input: "agents-registry-standing",
+                message: "verification payload is missing `official_status`".into(),
+            })?,
+            standing_level: self.public_standing,
+            reason_code: self.reason_code,
+            verified_at: parse_optional_timestamp("agents-registry-standing", self.verified_at)?,
+        };
+        Ok(RegistrySnapshot {
+            standing: Some(standing),
+            reputation: self
+                .reputation_summary
+                .map(RegistryReputationCompat::into_soul_reputation)
+                .transpose()?,
+        })
+    }
+}
+
+impl RegistryAuthorityCompat {
+    fn into_soul_snapshot(self) -> RegistrySnapshot {
+        RegistrySnapshot {
+            standing: Some(RegistryStanding {
+                status: self.official_status,
+                standing_level: self.public_standing,
+                reason_code: match self.official_status {
+                    RegistryStatus::Active => None,
+                    RegistryStatus::Suspended => self
+                        .suspension_reason
+                        .filter(|value| !value.trim().is_empty())
+                        .or_else(|| Some("suspended".to_owned())),
+                    RegistryStatus::Pending => Some("pending".to_owned()),
+                    RegistryStatus::Revoked => Some("revoked".to_owned()),
+                    RegistryStatus::Retired => Some("retired".to_owned()),
+                },
+                verified_at: DateTime::parse_from_rfc3339(&self.updated_at)
+                    .ok()
+                    .map(|timestamp| timestamp.with_timezone(&Utc)),
+            }),
+            reputation: self.reputation_summary.into_soul_reputation().ok(),
+        }
+    }
+}
+
+impl RegistryReputationCompat {
+    fn into_soul_reputation(self) -> Result<RegistryReputation, SoulError> {
+        let mut context = Vec::new();
+        if let Some(public_standing) = self.public_standing.filter(|value| !value.trim().is_empty())
+        {
+            context.push(format!("public standing: {public_standing}"));
+        }
+        if let Some(trend) = self.trend.filter(|value| !value.trim().is_empty()) {
+            context.push(format!("trend: {trend}"));
+        }
+        for category in self.category_breakdown {
+            context.push(format!("{}: {}", category.category, category.score_total));
+        }
+
+        Ok(RegistryReputation {
+            score_total: self.score_total,
+            score_recent_30d: self.score_recent_30d,
+            last_event_at: parse_optional_timestamp("agents-registry-reputation", self.last_event_at)?,
+            context,
+        })
+    }
+}
+
+fn parse_optional_timestamp(
+    input: &'static str,
+    value: Option<String>,
+) -> Result<Option<DateTime<Utc>>, SoulError> {
+    match value {
+        Some(raw) => DateTime::parse_from_rfc3339(&raw)
+            .map(|timestamp| Some(timestamp.with_timezone(&Utc)))
+            .map_err(|error| SoulError::UpstreamInvalid {
+                input,
+                message: error.to_string(),
+            }),
+        None => Ok(None),
     }
 }
 

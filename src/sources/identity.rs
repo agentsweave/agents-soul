@@ -3,10 +3,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use serde::Deserialize;
+use serde_json::Value;
+
 use crate::{
     domain::{
         BehaviorWarning, ComposeRequest, IdentifySignals, InputProvenance, RecoveryState,
-        SessionIdentitySnapshot, SoulConfig, SoulError, WarningSeverity,
+        RelationshipMarker, SessionIdentitySnapshot, SoulConfig, SoulError, WarningSeverity,
     },
     sources::{ReaderSelection, cache::read_cached_inputs},
 };
@@ -142,11 +145,19 @@ impl IdentityReader {
     }
 
     pub fn parse_snapshot(&self, content: &str) -> Result<SessionIdentitySnapshot, SoulError> {
-        let snapshot: SessionIdentitySnapshot =
-            serde_json::from_str(content).map_err(|error| SoulError::UpstreamInvalid {
-                input: "identity-snapshot",
-                message: error.to_string(),
-            })?;
+        let snapshot = match serde_json::from_str::<SessionIdentitySnapshot>(content) {
+            Ok(snapshot) => snapshot,
+            Err(primary_error) => {
+                if let Ok(snapshot) = serde_json::from_str::<IdentifySnapshotCompat>(content) {
+                    snapshot.into_soul_snapshot()
+                } else {
+                    return Err(SoulError::UpstreamInvalid {
+                        input: "identity-snapshot",
+                        message: primary_error.to_string(),
+                    });
+                }
+            }
+        };
 
         validate_snapshot(&snapshot)?;
         Ok(snapshot)
@@ -159,6 +170,15 @@ impl IdentityReader {
                 Ok(signals)
             }
             Err(_) => {
+                if let Ok(export) = serde_json::from_str::<IdentifyExportPayloadCompat>(content) {
+                    let snapshot = export.snapshot.into_soul_snapshot();
+                    validate_snapshot(&snapshot)?;
+                    return Ok(IdentifySignals {
+                        recovery_state: Some(snapshot.recovery_state),
+                        snapshot: Some(snapshot),
+                    });
+                }
+
                 let snapshot = self.parse_snapshot(content)?;
                 Ok(IdentifySignals {
                     recovery_state: Some(snapshot.recovery_state),
@@ -184,6 +204,121 @@ impl IdentityReader {
             .iter()
             .map(|candidate| root.join(candidate))
             .find(|candidate| candidate.is_file())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct IdentifyExportPayloadCompat {
+    snapshot: IdentifySnapshotCompat,
+}
+
+#[derive(Debug, Deserialize)]
+struct IdentifySnapshotCompat {
+    agent_id: String,
+    #[serde(default)]
+    fingerprint_blake3: Option<String>,
+    #[serde(default)]
+    local_continuity: IdentifyLocalContinuityCompat,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct IdentifyLocalContinuityCompat {
+    recovery: IdentifyRecoveryCompat,
+    #[serde(default)]
+    active_commitments: Vec<IdentifyCommitmentCompat>,
+    #[serde(default)]
+    durable_preferences: Vec<IdentifyPreferenceCompat>,
+    #[serde(default)]
+    relationship_markers: Vec<IdentifyRelationshipMarkerCompat>,
+    #[serde(default)]
+    facts: Vec<IdentifyFactCompat>,
+    #[serde(default)]
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IdentifyRecoveryCompat {
+    status: RecoveryState,
+}
+
+impl Default for IdentifyRecoveryCompat {
+    fn default() -> Self {
+        Self {
+            status: RecoveryState::Degraded,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct IdentifyCommitmentCompat {
+    title: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct IdentifyPreferenceCompat {
+    key: String,
+    value_json: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct IdentifyRelationshipMarkerCompat {
+    subject: String,
+    marker_type: String,
+    target: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct IdentifyFactCompat {
+    category: String,
+    value: String,
+}
+
+impl IdentifySnapshotCompat {
+    fn into_soul_snapshot(self) -> SessionIdentitySnapshot {
+        SessionIdentitySnapshot {
+            agent_id: self.agent_id,
+            display_name: None,
+            recovery_state: self.local_continuity.recovery.status,
+            active_commitments: self
+                .local_continuity
+                .active_commitments
+                .into_iter()
+                .map(|commitment| commitment.title)
+                .collect(),
+            durable_preferences: self
+                .local_continuity
+                .durable_preferences
+                .into_iter()
+                .map(|preference| format!("{}={}", preference.key, preference.value_json))
+                .collect(),
+            relationship_markers: self
+                .local_continuity
+                .relationship_markers
+                .into_iter()
+                .map(|marker| RelationshipMarker {
+                    subject: marker.subject,
+                    marker: marker.marker_type,
+                    note: Some(marker.target),
+                })
+                .collect(),
+            facts: self
+                .local_continuity
+                .facts
+                .into_iter()
+                .map(|fact| format!("{}: {}", fact.category, fact.value))
+                .collect(),
+            warnings: self
+                .local_continuity
+                .warnings
+                .into_iter()
+                .map(|message| BehaviorWarning {
+                    severity: WarningSeverity::Caution,
+                    code: "identify_warning".to_owned(),
+                    message,
+                })
+                .collect(),
+            fingerprint: self.fingerprint_blake3,
+        }
     }
 }
 
