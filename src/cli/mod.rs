@@ -7,7 +7,7 @@ pub mod reset;
 
 use std::{ffi::OsString, io};
 
-use clap::{Args, Parser, Subcommand, error::ErrorKind};
+use clap::{error::ErrorKind, Args, Parser, Subcommand};
 use serde::Serialize;
 
 use crate::{
@@ -28,6 +28,7 @@ enum CliCommand {
     Configure(ConfigureCmd),
     Explain(explain::ExplainCmd),
     Inspect(inspect::InspectCmd),
+    Mcp,
     Record(record::RecordCmd),
     Reset(reset::ResetCmd),
 }
@@ -127,6 +128,9 @@ fn execute(cli: Cli, config: &ApplicationConfig, deps: &AppDeps) -> Result<(), S
             let output = inspect::inspect_cmd(deps, cmd)?;
             print_json(&output)
         }
+        CliCommand::Mcp => crate::mcp::server::McpServer
+            .serve_stdio(deps)
+            .map_err(|error| SoulError::Internal(error.to_string())),
         CliCommand::Record(cmd) => {
             let result = record::record_cmd(deps, config, cmd)?;
             print_debug(&result)
@@ -527,6 +531,16 @@ mod tests {
     fn subcommand_help_returns_success_instead_of_validation_error() -> Result<(), Box<dyn Error>> {
         run_with_args(
             vec!["agents-soul", "compose", "--help"],
+            &ApplicationConfig::new("/tmp/unused"),
+            &AppDeps::default(),
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn mcp_help_returns_success_instead_of_validation_error() -> Result<(), Box<dyn Error>> {
+        run_with_args(
+            vec!["agents-soul", "mcp", "--help"],
             &ApplicationConfig::new("/tmp/unused"),
             &AppDeps::default(),
         )?;

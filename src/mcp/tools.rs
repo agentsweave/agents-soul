@@ -5,15 +5,15 @@ use crate::{
     },
     app::{
         deps::SoulDependencies,
-        errors::{SoulMcpToolError, SoulTransportError, map_soul_error},
+        errors::{map_soul_error, SoulMcpToolError, SoulTransportError},
     },
     domain::{
         BehavioralContext, ComposeRequest, PersonalityProfilePatch, SoulConfig, SoulConfigPatch,
         SoulError,
     },
     services::{
-        ServiceError,
         explain::{ExplainReport, InspectHeuristicProjection, InspectTraitProjection},
+        ServiceError,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -68,8 +68,12 @@ pub fn map_compose_error(error: &SoulError) -> SoulTransportError {
     map_soul_error(error)
 }
 
-pub fn compose_tool_error(error: &SoulError) -> SoulMcpToolError {
+pub fn tool_error(error: &SoulError) -> SoulMcpToolError {
     map_compose_error(error).mcp_tool_error()
+}
+
+pub fn compose_tool_error(error: &SoulError) -> SoulMcpToolError {
+    tool_error(error)
 }
 
 pub fn configure_workspace(
