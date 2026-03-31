@@ -73,9 +73,9 @@ Behavioral Context Alpha Builder
 - Reputation source: explicit
 - Identity fingerprint: id-degraded
 - Registry verification timestamp: 2026-03-29T08:00:00+00:00
-- Config hash: cfg_9ae82844a6e4913a
+- Config hash: cfg_49825caf71e876ea
 - Adaptation hash: adp_c96385fd0bdf7988
-- Input hash: inp_753f15480aec8eae
+- Input hash: inp_c0ebafea32effcc3
 
 ## Explain
 Explain Alpha Builder
@@ -115,8 +115,8 @@ Explain Alpha Builder
 - Compose mode: render uses degraded mode and profile `Alpha Builder`
 
 ## Provenance
-- Provenance: config hash cfg_9ae82844a6e4913a and adaptation hash adp_c96385fd0bdf7988 summarize local soul inputs
+- Provenance: config hash cfg_49825caf71e876ea and adaptation hash adp_c96385fd0bdf7988 summarize local soul inputs
 - Upstream identity: identity provenance source is explicit
 - Registry verification: registry verification provenance source is explicit
 - Registry reputation: registry reputation provenance source is explicit
-- Provenance: input hash inp_753f15480aec8eae locks the normalized compose inputs
+- Provenance: input hash inp_c0ebafea32effcc3 locks the normalized compose inputs
