@@ -12,7 +12,7 @@ use crate::{
     },
 };
 
-use super::compose::{ComposeCmd, build_request};
+use super::compose::{build_request, ComposeCmd};
 
 #[derive(Debug, Clone, Args)]
 pub struct InspectCmd {

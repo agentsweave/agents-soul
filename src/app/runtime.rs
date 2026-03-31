@@ -1,5 +1,5 @@
 use crate::{
-    app::{config::ApplicationConfig, deps::AppDeps},
+    app::{config::ApplicationConfig, deps::AppDeps, tracing},
     cli,
     domain::SoulError,
 };
@@ -53,6 +53,7 @@ impl SoulRuntime {
     }
 
     pub fn run(&self) -> Result<(), SoulError> {
+        tracing::init_tracing()?;
         self.dispatch_with(cli::run)
     }
 

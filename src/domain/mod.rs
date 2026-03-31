@@ -28,14 +28,15 @@ pub use errors::{SoulError, SoulErrorCategory};
 pub use heuristics::DecisionHeuristic;
 pub use inputs::{
     BehaviorInputs, ComposeRequest, IdentifySignals, InputProvenance, InputSourceKind,
-    NormalizedInputs, RegistryReputation, RegistrySnapshot, RegistryStanding, RelationshipMarker,
-    ReputationSummary, SessionIdentitySnapshot, VerificationResult,
+    NormalizedIdentityInputs, NormalizedInputs, NormalizedRegistryInputs, NormalizedUpstreamInputs,
+    RegistryReputation, RegistrySnapshot, RegistryStanding, RelationshipMarker, ReputationSummary,
+    SessionIdentitySnapshot, VerificationResult,
 };
-pub use interactions::InteractionEvent;
+pub use interactions::{InteractionEvent, InteractionOutcome, InteractionSignal};
 pub use limits::{OfflineRegistryBehavior, RevokedBehavior, SoulLimits};
 pub use profile::PersonalityProfile;
 pub use provenance::ProvenanceReport;
-pub use status::{ComposeMode, RecoveryState, RegistryStatus, StatusSummary};
+pub use status::{ComposeMode, ComposeModeResolver, RecoveryState, RegistryStatus, StatusSummary};
 pub use style::{
     CommunicationStyle, ConflictStyle, FeedbackStyle, ParagraphBudget, QuestionStyle,
     RegisterStyle, UncertaintyStyle,

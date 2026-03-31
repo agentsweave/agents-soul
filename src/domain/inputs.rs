@@ -167,6 +167,36 @@ pub struct RegistryReputation {
 pub type ReputationSummary = RegistryReputation;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct NormalizedIdentityInputs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<SessionIdentitySnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_state: Option<RecoveryState>,
+    #[serde(default)]
+    pub provenance: InputProvenance,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct NormalizedRegistryInputs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification: Option<VerificationResult>,
+    #[serde(default)]
+    pub verification_provenance: InputProvenance,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reputation: Option<ReputationSummary>,
+    #[serde(default)]
+    pub reputation_provenance: InputProvenance,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct NormalizedUpstreamInputs {
+    #[serde(default)]
+    pub identity: NormalizedIdentityInputs,
+    #[serde(default)]
+    pub registry: NormalizedRegistryInputs,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct RegistrySnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub standing: Option<RegistryStanding>,
@@ -206,20 +236,8 @@ pub struct NormalizedInputs {
     pub agent_id: String,
     pub profile_name: String,
     pub compose_mode_hint: Option<ComposeMode>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub identity_snapshot: Option<SessionIdentitySnapshot>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub identity_recovery_state: Option<RecoveryState>,
     #[serde(default)]
-    pub identity_provenance: InputProvenance,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub verification_result: Option<VerificationResult>,
-    #[serde(default)]
-    pub verification_provenance: InputProvenance,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reputation_summary: Option<ReputationSummary>,
-    #[serde(default)]
-    pub reputation_provenance: InputProvenance,
+    pub upstream: NormalizedUpstreamInputs,
     pub soul_config: SoulConfig,
     pub adaptation_state: AdaptationState,
     #[serde(default)]

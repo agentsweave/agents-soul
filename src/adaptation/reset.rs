@@ -21,7 +21,7 @@ pub struct AdaptiveResetRequest {
     pub recorded_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum AdaptiveResetEffect {
     Duplicate,
     Cleared,
@@ -29,7 +29,7 @@ pub enum AdaptiveResetEffect {
     RecordedWithoutState,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct AdaptiveResetResult {
     pub effect: AdaptiveResetEffect,
     pub stored_state: Option<StoredAdaptationState>,

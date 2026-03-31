@@ -6,7 +6,7 @@ use serde::Serialize;
 use crate::{
     app::{
         deps::SoulDependencies,
-        errors::{SoulTransportError, map_soul_error},
+        errors::{map_soul_error, SoulTransportError},
     },
     domain::{BehavioralContext, ComposeRequest, SoulError},
     services::explain::FullContextReport,

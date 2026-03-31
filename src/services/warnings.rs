@@ -16,19 +16,23 @@ impl WarningService {
 
         warnings.extend(
             normalized
-                .identity_snapshot
+                .upstream
+                .identity
+                .snapshot
                 .as_ref()
                 .map(|snapshot| snapshot.warnings.clone())
                 .unwrap_or_default(),
         );
 
-        if normalized.identity_snapshot.is_none()
-            && let Some(recovery_state) = normalized.identity_recovery_state
+        if normalized.upstream.identity.snapshot.is_none()
+            && let Some(recovery_state) = normalized.upstream.identity.recovery_state
         {
             warnings.push(missing_snapshot_warning(recovery_state));
         }
 
-        if normalized.identity_snapshot.is_none() && normalized.identity_recovery_state.is_none() {
+        if normalized.upstream.identity.snapshot.is_none()
+            && normalized.upstream.identity.recovery_state.is_none()
+        {
             warnings.push(warning(
                 WarningSeverity::Caution,
                 "identity_unavailable",
@@ -36,7 +40,7 @@ impl WarningService {
             ));
         }
 
-        if normalized.verification_result.is_none() {
+        if normalized.upstream.registry.verification.is_none() {
             warnings.push(warning(
                 WarningSeverity::Important,
                 "registry_unavailable",
@@ -44,7 +48,9 @@ impl WarningService {
             ));
         }
 
-        if normalized.request.include_reputation && normalized.reputation_summary.is_none() {
+        if normalized.request.include_reputation
+            && normalized.upstream.registry.reputation.is_none()
+        {
             warnings.push(warning(
                 WarningSeverity::Info,
                 "reputation_unavailable",
@@ -52,7 +58,7 @@ impl WarningService {
             ));
         }
 
-        if let Some(recovery_state) = normalized.identity_recovery_state {
+        if let Some(recovery_state) = normalized.upstream.identity.recovery_state {
             match recovery_state {
                 RecoveryState::Healthy => {}
                 RecoveryState::Recovering => warnings.push(warning(
@@ -74,7 +80,9 @@ impl WarningService {
         }
 
         match normalized
-            .verification_result
+            .upstream
+            .registry
+            .verification
             .as_ref()
             .map(|verification| verification.status)
         {

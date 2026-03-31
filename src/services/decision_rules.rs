@@ -115,8 +115,8 @@ mod tests {
     use chrono::Utc;
 
     use crate::domain::{
-        BehaviorInputs, ComposeMode, ComposeRequest, RegistryStatus, ReputationSummary, SoulConfig,
-        VerificationResult,
+        AdaptationState, BehaviorInputs, ComposeMode, ComposeRequest, DecisionHeuristic,
+        HeuristicOverride, RegistryStatus, ReputationSummary, SoulConfig, VerificationResult,
     };
     use crate::sources::normalize::normalize_inputs;
 
@@ -179,6 +179,108 @@ mod tests {
 
         assert!(rules.iter().any(|rule| rule.contains("self-check steps")));
         assert!(rules.iter().any(|rule| rule.contains("reputation is low")));
+    }
+
+    #[test]
+    fn derive_prepends_mode_specific_rules() {
+        let normalized = normalized_inputs(None, None);
+
+        let degraded = DecisionRulesService.derive(&normalized, ComposeMode::Degraded);
+        assert!(
+            degraded
+                .first()
+                .is_some_and(|rule| rule.contains("reversible actions"))
+        );
+
+        let restricted = DecisionRulesService.derive(&normalized, ComposeMode::Restricted);
+        assert!(
+            restricted
+                .first()
+                .is_some_and(|rule| rule.contains("operator confirmation"))
+        );
+
+        let fail_closed = DecisionRulesService.derive(&normalized, ComposeMode::FailClosed);
+        assert!(
+            fail_closed
+                .first()
+                .is_some_and(|rule| rule.contains("fail-closed state"))
+        );
+    }
+
+    #[test]
+    fn derive_applies_overrides_before_sorting_and_caps_adaptive_rules() {
+        let request = ComposeRequest::new("alpha", "session-1");
+        let mut config = SoulConfig {
+            agent_id: "alpha".into(),
+            profile_name: "Alpha".into(),
+            ..SoulConfig::default()
+        };
+        config.limits.max_adaptive_rules = 2;
+        config.decision_heuristics = vec![
+            DecisionHeuristic {
+                heuristic_id: "alpha".into(),
+                title: "Alpha".into(),
+                priority: 1,
+                trigger: "default".into(),
+                instruction: "Alpha rule".into(),
+                enabled: true,
+                ..DecisionHeuristic::default()
+            },
+            DecisionHeuristic {
+                heuristic_id: "beta".into(),
+                title: "Beta".into(),
+                priority: 3,
+                trigger: "default".into(),
+                instruction: "Beta rule".into(),
+                enabled: true,
+                ..DecisionHeuristic::default()
+            },
+            DecisionHeuristic {
+                heuristic_id: "gamma".into(),
+                title: "Gamma".into(),
+                priority: 2,
+                trigger: "default".into(),
+                instruction: "Gamma rule".into(),
+                enabled: true,
+                ..DecisionHeuristic::default()
+            },
+        ];
+
+        let normalized = normalize_inputs(
+            &request,
+            BehaviorInputs {
+                soul_config: config,
+                adaptation_state: AdaptationState {
+                    heuristic_overrides: vec![
+                        HeuristicOverride {
+                            heuristic_id: "alpha".into(),
+                            priority_delta: 5,
+                            enabled: Some(true),
+                            replacement_instruction: Some("Alpha override".into()),
+                            note: None,
+                        },
+                        HeuristicOverride {
+                            heuristic_id: "beta".into(),
+                            priority_delta: 0,
+                            enabled: Some(false),
+                            replacement_instruction: None,
+                            note: None,
+                        },
+                    ],
+                    ..AdaptationState::default()
+                },
+                generated_at: Utc::now(),
+                ..BehaviorInputs::default()
+            },
+        )
+        .expect("normalized inputs");
+
+        let rules = DecisionRulesService.derive(&normalized, ComposeMode::Normal);
+
+        assert_eq!(
+            rules,
+            vec!["Alpha override".to_owned(), "Gamma rule".to_owned()]
+        );
     }
 
     fn normalized_inputs(

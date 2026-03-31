@@ -3,7 +3,12 @@ use std::{fs, path::Path};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::domain::{CommunicationOverride, HeuristicOverride, PersonalityOverride, SoulError};
+use crate::{
+    domain::interactions::InteractionOutcome,
+    domain::{
+        CommunicationOverride, HeuristicOverride, InteractionEvent, PersonalityOverride, SoulError,
+    },
+};
 
 use super::migrations;
 
@@ -116,6 +121,64 @@ INSERT OR IGNORE INTO interaction_events (
         .map_err(storage_error)?;
 
     Ok(inserted > 0)
+}
+
+pub fn load_interaction_events(
+    conn: &Connection,
+    agent_id: &str,
+) -> Result<Vec<InteractionEvent>, SoulError> {
+    initialize_database(conn)?;
+
+    let mut statement = conn
+        .prepare(
+            r#"
+SELECT
+    agent_id,
+    session_id,
+    interaction_type,
+    outcome,
+    signals_json,
+    notes,
+    recorded_at
+FROM interaction_events
+WHERE agent_id = ?1
+ORDER BY recorded_at ASC, session_id ASC, interaction_type ASC, notes ASC, event_id ASC
+"#,
+        )
+        .map_err(storage_error)?;
+
+    let rows = statement
+        .query_map(params![agent_id], |row| {
+            let outcome = row.get::<_, String>(3)?;
+            let signals_json = row.get::<_, String>(4)?;
+            let recorded_at = parse_timestamp(row.get::<_, String>(6)?)?;
+
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+                outcome,
+                signals_json,
+                row.get::<_, Option<String>>(5)?,
+                recorded_at,
+            ))
+        })
+        .map_err(storage_error)?;
+
+    rows.map(|row| {
+        let (agent_id, session_id, interaction_type, outcome, signals_json, notes, recorded_at) =
+            row.map_err(storage_error)?;
+        Ok(InteractionEvent {
+            agent_id,
+            session_id,
+            interaction_type,
+            outcome: deserialize_interaction_outcome(&outcome)?,
+            signals: deserialize_json(&signals_json)?,
+            notes,
+            recorded_at,
+        })
+    })
+    .collect()
 }
 
 pub fn load_adaptation_state(
@@ -370,6 +433,17 @@ where
     T: serde::de::DeserializeOwned,
 {
     serde_json::from_str(raw).map_err(|error| SoulError::Storage(error.to_string()))
+}
+
+fn deserialize_interaction_outcome(raw: &str) -> Result<InteractionOutcome, SoulError> {
+    match raw {
+        "positive" => Ok(InteractionOutcome::Positive),
+        "neutral" => Ok(InteractionOutcome::Neutral),
+        "negative" => Ok(InteractionOutcome::Negative),
+        _ => Err(SoulError::Storage(format!(
+            "unknown interaction outcome `{raw}` in storage"
+        ))),
+    }
 }
 
 fn serialize_json<T>(value: &T) -> Result<String, SoulError>

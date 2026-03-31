@@ -200,4 +200,85 @@ mod tests {
         assert!((effective.directness - 0.91).abs() < f32::EPSILON);
         assert!(effective.risk_tolerance <= 0.18);
     }
+
+    #[test]
+    fn adaptation_can_be_disabled_without_losing_baseline_profile() {
+        let request = ComposeRequest::new("alpha", "session-1");
+        let mut config = SoulConfig {
+            agent_id: "alpha".into(),
+            profile_name: "Alpha".into(),
+            ..SoulConfig::default()
+        };
+        config.adaptation.enabled = false;
+
+        let normalized = normalize_inputs(
+            &request,
+            BehaviorInputs {
+                soul_config: config,
+                adaptation_state: AdaptationState {
+                    trait_overrides: PersonalityOverride {
+                        directness: -0.50,
+                        warmth: 0.40,
+                        ..PersonalityOverride::default()
+                    },
+                    ..AdaptationState::default()
+                },
+                generated_at: Utc::now(),
+                ..BehaviorInputs::default()
+            },
+        )
+        .expect("normalized inputs");
+
+        let service = EffectiveProfileService;
+        let baseline = service.derive_baseline(&normalized);
+        let effective = service.derive(&normalized, ComposeMode::Normal);
+
+        assert_eq!(effective, baseline);
+    }
+
+    #[test]
+    fn compose_modes_apply_visible_autonomy_bounds() {
+        let request = ComposeRequest::new("alpha", "session-1");
+        let config = SoulConfig {
+            agent_id: "alpha".into(),
+            profile_name: "Alpha".into(),
+            ..SoulConfig::default()
+        };
+
+        let normalized = normalize_inputs(
+            &request,
+            BehaviorInputs {
+                soul_config: config,
+                adaptation_state: AdaptationState {
+                    trait_overrides: PersonalityOverride {
+                        directness: 0.40,
+                        warmth: -0.20,
+                        verbosity: 0.50,
+                        ..PersonalityOverride::default()
+                    },
+                    ..AdaptationState::default()
+                },
+                generated_at: Utc::now(),
+                ..BehaviorInputs::default()
+            },
+        )
+        .expect("normalized inputs");
+
+        let service = EffectiveProfileService;
+
+        let degraded = service.derive(&normalized, ComposeMode::Degraded);
+        assert!(degraded.initiative <= 0.55);
+        assert!(degraded.risk_tolerance <= 0.18);
+        assert!(degraded.formality >= 0.72);
+        assert!(degraded.conscientiousness >= 0.88);
+
+        let fail_closed = service.derive(&normalized, ComposeMode::FailClosed);
+        assert!(fail_closed.initiative <= 0.05);
+        assert!(fail_closed.risk_tolerance <= 0.02);
+        assert!(fail_closed.directness <= 0.40);
+        assert!(fail_closed.verbosity <= 0.25);
+        assert!(fail_closed.formality >= 0.82);
+        assert!(fail_closed.conscientiousness >= 0.95);
+        assert!(fail_closed.warmth >= 0.45);
+    }
 }

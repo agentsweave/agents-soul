@@ -1,9 +1,9 @@
 use std::cmp::Reverse;
 
 use crate::domain::{
-    BehaviorInputs, ComposeMode, ComposeRequest, InputProvenance, InputSourceKind,
-    NormalizedInputs, RecoveryState, RegistryStatus, RelationshipMarker, SoulError,
-    WarningSeverity,
+    BehaviorInputs, ComposeModeResolver, ComposeRequest, InputProvenance, InputSourceKind,
+    NormalizedIdentityInputs, NormalizedInputs, NormalizedRegistryInputs, NormalizedUpstreamInputs,
+    RelationshipMarker, SoulError, WarningSeverity,
 };
 use crate::sources::identity::agent_mismatch_warning;
 
@@ -138,7 +138,7 @@ pub fn normalize_inputs(
         .map(|snapshot| snapshot.recovery_state)
         .or(inputs.identity_recovery_state);
 
-    let compose_mode_hint = compose_mode_hint(
+    let compose_mode_hint = ComposeModeResolver::resolve(
         verification_result
             .as_ref()
             .map(|verification| verification.status),
@@ -152,13 +152,19 @@ pub fn normalize_inputs(
         agent_id: request.agent_id.clone(),
         profile_name: inputs.soul_config.profile_name.clone(),
         compose_mode_hint: Some(compose_mode_hint),
-        identity_snapshot,
-        identity_recovery_state,
-        identity_provenance,
-        verification_result,
-        verification_provenance,
-        reputation_summary,
-        reputation_provenance,
+        upstream: NormalizedUpstreamInputs {
+            identity: NormalizedIdentityInputs {
+                snapshot: identity_snapshot,
+                recovery_state: identity_recovery_state,
+                provenance: identity_provenance,
+            },
+            registry: NormalizedRegistryInputs {
+                verification: verification_result,
+                verification_provenance,
+                reputation: reputation_summary,
+                reputation_provenance,
+            },
+        },
         soul_config: inputs.soul_config,
         adaptation_state: inputs.adaptation_state,
         reader_warnings,
@@ -194,36 +200,5 @@ fn unavailable_if_missing(provenance: InputProvenance, fallback_detail: &str) ->
     match provenance.source {
         InputSourceKind::Unavailable => provenance,
         _ => InputProvenance::unavailable(fallback_detail),
-    }
-}
-
-fn compose_mode_hint(
-    registry_status: Option<RegistryStatus>,
-    recovery_state: Option<RecoveryState>,
-    offline_behavior: crate::domain::OfflineRegistryBehavior,
-) -> ComposeMode {
-    match registry_status {
-        Some(RegistryStatus::Revoked) => ComposeMode::FailClosed,
-        Some(RegistryStatus::Suspended) => ComposeMode::Restricted,
-        Some(_) => match recovery_state {
-            Some(RecoveryState::Broken)
-            | Some(RecoveryState::Degraded)
-            | Some(RecoveryState::Recovering) => ComposeMode::Degraded,
-            Some(RecoveryState::Healthy) => ComposeMode::Normal,
-            None => ComposeMode::BaselineOnly,
-        },
-        None => {
-            if recovery_state.is_none() {
-                ComposeMode::BaselineOnly
-            } else {
-                match offline_behavior {
-                    crate::domain::OfflineRegistryBehavior::Cautious => ComposeMode::Degraded,
-                    crate::domain::OfflineRegistryBehavior::BaselineOnly => {
-                        ComposeMode::BaselineOnly
-                    }
-                    crate::domain::OfflineRegistryBehavior::FailClosed => ComposeMode::FailClosed,
-                }
-            }
-        }
     }
 }

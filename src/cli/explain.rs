@@ -6,13 +6,13 @@ use serde::Serialize;
 use crate::{
     app::{
         deps::SoulDependencies,
-        errors::{SoulTransportError, map_soul_error},
+        errors::{map_soul_error, SoulTransportError},
     },
     domain::SoulError,
     services::explain::ExplainReport,
 };
 
-use super::compose::{ComposeCmd, build_request};
+use super::compose::{build_request, ComposeCmd};
 
 #[derive(Debug, Clone, Args)]
 pub struct ExplainCmd {

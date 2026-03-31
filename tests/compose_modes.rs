@@ -154,7 +154,12 @@ fn compose_degraded_mode_marks_reduced_autonomy() -> Result<(), Box<dyn Error>> 
 
             let codes = warning_codes(&context);
             ensure(
-                codes == vec!["compose_degraded", "identity_degraded", "reputation_unavailable"],
+                codes
+                    == vec![
+                        "compose_degraded",
+                        "identity_degraded",
+                        "reputation_unavailable",
+                    ],
                 format!("unexpected degraded warning codes: {codes:?}"),
             )?;
             ensure(
@@ -199,7 +204,12 @@ fn compose_baseline_only_mode_preserves_verified_status_without_identity()
 
             let codes = warning_codes(&context);
             ensure(
-                codes == vec!["baseline_only", "identity_unavailable", "reputation_unavailable"],
+                codes
+                    == vec![
+                        "baseline_only",
+                        "identity_unavailable",
+                        "reputation_unavailable",
+                    ],
                 format!("unexpected baseline-only warning codes: {codes:?}"),
             )?;
             ensure(
@@ -263,18 +273,18 @@ fn warning_codes(context: &BehavioralContext) -> Vec<&str> {
 fn fixture(name: &str) -> Result<&'static str, Box<dyn Error>> {
     match name {
         "identity_healthy.json" => Ok(include_str!("fixtures/compose_modes/identity_healthy.json")),
-        "identity_degraded.json" => {
-            Ok(include_str!("fixtures/compose_modes/identity_degraded.json"))
-        }
-        "verification_active.json" => {
-            Ok(include_str!("fixtures/compose_modes/verification_active.json"))
-        }
+        "identity_degraded.json" => Ok(include_str!(
+            "fixtures/compose_modes/identity_degraded.json"
+        )),
+        "verification_active.json" => Ok(include_str!(
+            "fixtures/compose_modes/verification_active.json"
+        )),
         "verification_suspended.json" => Ok(include_str!(
             "fixtures/compose_modes/verification_suspended.json"
         )),
-        "verification_revoked.json" => {
-            Ok(include_str!("fixtures/compose_modes/verification_revoked.json"))
-        }
+        "verification_revoked.json" => Ok(include_str!(
+            "fixtures/compose_modes/verification_revoked.json"
+        )),
         other => Err(format!("unknown compose-mode fixture `{other}`").into()),
     }
 }

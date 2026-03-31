@@ -15,6 +15,7 @@ pub use commitments::CommitmentsService;
 pub use communication::CommunicationRulesService;
 pub use compose::ComposeService;
 pub use decision_rules::DecisionRulesService;
+pub use explain::ExplainService;
 pub use profile::EffectiveProfileService;
 pub use provenance::ProvenanceService;
 pub use relationships::RelationshipsService;

@@ -13,8 +13,17 @@ use crate::{
     storage::sqlite::ResetScope,
 };
 
+const DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
+const MODERN_PROTOCOL_VERSION: &str = "2025-03-26";
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct McpServer;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MessageMode {
+    Framed,
+    LineDelimited,
+}
 
 impl McpServer {
     pub fn serve_stdio(&self, deps: &SoulDependencies) -> io::Result<()> {
@@ -23,7 +32,7 @@ impl McpServer {
         let mut reader = BufReader::new(stdin.lock());
         let mut writer = BufWriter::new(stdout.lock());
 
-        while let Some(body) = read_message(&mut reader)? {
+        while let Some((body, message_mode)) = read_message(&mut reader)? {
             let response = match serde_json::from_str::<Value>(&body) {
                 Ok(request) => self.handle_request(deps, request),
                 Err(error) => Some(jsonrpc_error(
@@ -35,7 +44,7 @@ impl McpServer {
             };
 
             if let Some(response) = response {
-                write_message(&mut writer, &response)?;
+                write_message(&mut writer, &response, message_mode)?;
             }
         }
 
@@ -60,7 +69,7 @@ impl McpServer {
             "initialize" => Some(jsonrpc_result(
                 id.unwrap_or(Value::Null),
                 json!({
-                    "protocolVersion": "2025-03-26",
+                    "protocolVersion": negotiated_protocol_version(&request),
                     "serverInfo": {
                         "name": "agents-soul",
                         "version": env!("CARGO_PKG_VERSION"),
@@ -488,7 +497,7 @@ fn jsonrpc_error(id: Value, code: i64, message: impl Into<String>, data: Option<
     })
 }
 
-fn read_message<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
+fn read_message<R: BufRead>(reader: &mut R) -> io::Result<Option<(String, MessageMode)>> {
     let mut content_length = None;
 
     loop {
@@ -498,11 +507,15 @@ fn read_message<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
             return Ok(None);
         }
 
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if content_length.is_none() && trimmed.starts_with('{') {
+            return Ok(Some((trimmed.to_string(), MessageMode::LineDelimited)));
+        }
+
         if line == "\r\n" || line == "\n" {
             break;
         }
 
-        let trimmed = line.trim_end_matches(['\r', '\n']);
         if let Some(value) = trimmed
             .split_once(':')
             .and_then(|(name, value)| name.eq_ignore_ascii_case("content-length").then_some(value))
@@ -525,7 +538,9 @@ fn read_message<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
     })?;
     let mut body = vec![0_u8; content_length];
     reader.read_exact(&mut body)?;
-    String::from_utf8(body).map(Some).map_err(|error| {
+    String::from_utf8(body)
+        .map(|body| Some((body, MessageMode::Framed)))
+        .map_err(|error| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("invalid UTF-8 body in MCP stdio request: {error}"),
@@ -533,18 +548,44 @@ fn read_message<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
     })
 }
 
-fn write_message<W: Write>(writer: &mut W, message: &Value) -> io::Result<()> {
-    let body = serde_json::to_vec(message).map_err(|error| {
+fn write_message<W: Write>(
+    writer: &mut W,
+    message: &Value,
+    message_mode: MessageMode,
+) -> io::Result<()> {
+    let body = serde_json::to_string(message).map_err(|error| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("failed to serialize MCP response: {error}"),
         )
     })?;
-    write!(writer, "Content-Length: {}\r\n\r\n", body.len())?;
-    writer.write_all(&body)?;
+
+    match message_mode {
+        MessageMode::Framed => {
+            write!(writer, "Content-Length: {}\r\n\r\n", body.len())?;
+            writer.write_all(body.as_bytes())?;
+        }
+        MessageMode::LineDelimited => {
+            writer.write_all(body.as_bytes())?;
+            writer.write_all(b"\n")?;
+        }
+    }
+
     writer.flush()
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn negotiated_protocol_version(request: &Value) -> &'static str {
+    match request
+        .get("params")
+        .and_then(|params| params.get("protocolVersion"))
+        .and_then(Value::as_str)
+    {
+        Some(MODERN_PROTOCOL_VERSION) => MODERN_PROTOCOL_VERSION,
+        Some(DEFAULT_PROTOCOL_VERSION) => DEFAULT_PROTOCOL_VERSION,
+        _ => DEFAULT_PROTOCOL_VERSION,
+    }
 }

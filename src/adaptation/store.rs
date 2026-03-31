@@ -5,17 +5,18 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 
 use crate::{
     app::config::WorkspacePaths,
+    domain::interactions::InteractionOutcome,
     domain::{
         AdaptationState, CURRENT_SCHEMA_VERSION, CommunicationOverride, HeuristicOverride,
-        PersonalityOverride, SoulConfig, SoulError,
+        InteractionEvent, PersonalityOverride, SoulConfig, SoulError,
     },
-    storage::sqlite::{self, AdaptationStateRecord},
+    storage::sqlite::{self, AdaptationStateRecord, InteractionEventRecord},
 };
 
 use super::{
     bounds::clamp_trait_delta,
     overrides::{EffectiveOverrideSet, materialize_effective_overrides},
-    reducer::InteractionReduction,
+    reducer::{InteractionReduction, reduce_interaction_evidence},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,7 +47,7 @@ pub struct AdaptiveWriteResult {
     pub stored_state: Option<StoredAdaptationState>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct StoredAdaptationState {
     pub agent_id: String,
     pub adaptation_state: AdaptationState,
@@ -54,6 +55,29 @@ pub struct StoredAdaptationState {
     pub last_interaction_at: Option<DateTime<Utc>>,
     pub last_reset_at: Option<DateTime<Utc>>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InteractionRecordRequest {
+    pub event_id: String,
+    pub event: InteractionEvent,
+    pub context_json: String,
+    pub persist: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum InteractionRecordEffect {
+    Duplicate,
+    SessionOnly,
+    Inserted,
+    Updated,
+    Unchanged,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct InteractionRecordResult {
+    pub effect: InteractionRecordEffect,
+    pub stored_state: Option<StoredAdaptationState>,
 }
 
 impl AdaptiveWriteRequest {
@@ -126,6 +150,42 @@ impl AdaptiveWriteRequest {
             last_interaction_at: self.last_interaction_at,
             last_reset_at,
             updated_at: self.updated_at,
+        })
+    }
+}
+
+impl InteractionRecordRequest {
+    fn validate(&self) -> Result<(), SoulError> {
+        if self.event_id.trim().is_empty() {
+            return Err(SoulError::Validation("event_id must not be empty".into()));
+        }
+        if self.event.agent_id.trim().is_empty() {
+            return Err(SoulError::Validation("agent_id must not be empty".into()));
+        }
+        if self.event.interaction_type.trim().is_empty() {
+            return Err(SoulError::Validation(
+                "interaction_type must not be empty".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn as_record(&self) -> Result<InteractionEventRecord, SoulError> {
+        self.validate()?;
+        Ok(InteractionEventRecord {
+            event_id: self.event_id.clone(),
+            agent_id: self.event.agent_id.clone(),
+            session_id: self.event.session_id.clone(),
+            interaction_type: self.event.interaction_type.clone(),
+            outcome: match self.event.outcome {
+                InteractionOutcome::Positive => "positive".to_owned(),
+                InteractionOutcome::Neutral => "neutral".to_owned(),
+                InteractionOutcome::Negative => "negative".to_owned(),
+            },
+            signals_json: serialize_json(&self.event.signals)?,
+            context_json: self.context_json.clone(),
+            notes: self.event.notes.clone(),
+            recorded_at: self.event.recorded_at,
         })
     }
 }
@@ -304,6 +364,66 @@ pub fn persist_workspace_adaptation_write(
     persist_adaptation_write(&conn, config, request)
 }
 
+pub fn record_interaction(
+    conn: &Connection,
+    config: &SoulConfig,
+    request: &InteractionRecordRequest,
+) -> Result<InteractionRecordResult, SoulError> {
+    let event_record = request.as_record()?;
+    let inserted = sqlite::record_interaction_event(conn, &event_record)?;
+    if !inserted {
+        return Ok(InteractionRecordResult {
+            effect: InteractionRecordEffect::Duplicate,
+            stored_state: load_stored_adaptation_state(conn, &request.event.agent_id)?,
+        });
+    }
+
+    let mut events = sqlite::load_interaction_events(conn, &request.event.agent_id)?;
+    events.sort_by(|left, right| {
+        (
+            left.recorded_at,
+            left.session_id.as_deref().unwrap_or_default(),
+            left.interaction_type.as_str(),
+            left.notes.as_deref().unwrap_or_default(),
+        )
+            .cmp(&(
+                right.recorded_at,
+                right.session_id.as_deref().unwrap_or_default(),
+                right.interaction_type.as_str(),
+                right.notes.as_deref().unwrap_or_default(),
+            ))
+    });
+
+    let reduction = reduce_interaction_evidence(config, &events, request.event.recorded_at);
+    let write_request = AdaptiveWriteRequest::from_reduction(
+        request.event.agent_id.clone(),
+        request.persist,
+        request.event.recorded_at,
+        &reduction,
+    );
+    let write_result = persist_adaptation_write(conn, config, &write_request)?;
+
+    Ok(InteractionRecordResult {
+        effect: match write_result.effect {
+            AdaptiveWriteEffect::SessionOnly => InteractionRecordEffect::SessionOnly,
+            AdaptiveWriteEffect::Inserted => InteractionRecordEffect::Inserted,
+            AdaptiveWriteEffect::Updated => InteractionRecordEffect::Updated,
+            AdaptiveWriteEffect::Unchanged => InteractionRecordEffect::Unchanged,
+        },
+        stored_state: write_result.stored_state,
+    })
+}
+
+pub fn record_workspace_interaction(
+    workspace_root: impl AsRef<Path>,
+    config: &SoulConfig,
+    request: &InteractionRecordRequest,
+) -> Result<InteractionRecordResult, SoulError> {
+    let db_path = WorkspacePaths::new(workspace_root.as_ref().to_path_buf()).adaptation_db_path();
+    let conn = sqlite::open_database(db_path)?;
+    record_interaction(&conn, config, request)
+}
+
 fn normalize_notes(mut notes: Vec<String>) -> Vec<String> {
     notes.retain(|note| !note.trim().is_empty());
     notes.sort();
@@ -381,15 +501,20 @@ fn read_u32_column(value: i64, field: &str) -> Result<u32, rusqlite::Error> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AdaptiveWriteEffect, AdaptiveWriteRequest, load_effective_adaptation_state,
-        load_stored_adaptation_state, persist_adaptation_write, persist_workspace_adaptation_write,
-        read_workspace_effective_overrides,
+        AdaptiveWriteEffect, AdaptiveWriteRequest, InteractionRecordEffect,
+        InteractionRecordRequest, load_effective_adaptation_state, load_stored_adaptation_state,
+        persist_adaptation_write, persist_workspace_adaptation_write,
+        read_workspace_effective_overrides, record_interaction,
     };
     use crate::{
         app::config::WorkspacePaths,
+        domain::interactions::{
+            InteractionOutcome, InteractionSignal, SignalDirection, TraitSignal,
+        },
         domain::{
             CommunicationOverride, ConflictStyle, FeedbackStyle, HeuristicOverride,
-            ParagraphBudget, PersonalityOverride, QuestionStyle, RegisterStyle, UncertaintyStyle,
+            InteractionEvent, ParagraphBudget, PersonalityOverride, QuestionStyle, RegisterStyle,
+            UncertaintyStyle,
         },
         storage::sqlite::initialize_database,
     };
@@ -562,6 +687,93 @@ mod tests {
             effective.adaptation_state.heuristic_overrides[0].heuristic_id,
             "alpha"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn record_interaction_persists_event_and_materializes_bounded_state()
+    -> Result<(), Box<dyn Error>> {
+        let conn = Connection::open_in_memory()?;
+        initialize_database(&conn)?;
+
+        let mut config = sample_config();
+        config.adaptation.min_interactions_for_adapt = 1;
+        config.limits.max_trait_drift = 0.04;
+
+        let result = record_interaction(
+            &conn,
+            &config,
+            &InteractionRecordRequest {
+                event_id: "evt-1".to_owned(),
+                event: InteractionEvent {
+                    agent_id: "agent.alpha".to_owned(),
+                    session_id: Some("session.alpha".to_owned()),
+                    interaction_type: "review".to_owned(),
+                    outcome: InteractionOutcome::Negative,
+                    signals: vec![InteractionSignal::Trait(TraitSignal {
+                        trait_name: crate::domain::interactions::AdaptiveTrait::Verbosity,
+                        direction: SignalDirection::Decrease,
+                        strength: 1.0,
+                        reason: "user preferred concise responses".to_owned(),
+                    })],
+                    notes: Some("trim responses".to_owned()),
+                    recorded_at: test_timestamp(2026, 3, 29, 2, 0, 0)?,
+                },
+                context_json: r#"{"surface":"mcp"}"#.to_owned(),
+                persist: true,
+            },
+        )?;
+
+        assert_eq!(result.effect, InteractionRecordEffect::Inserted);
+        let stored = result
+            .stored_state
+            .ok_or_else(|| io::Error::other("missing stored state after interaction record"))?;
+        assert_eq!(stored.interaction_count, 1);
+        assert!(stored.adaptation_state.trait_overrides.verbosity < 0.0);
+        assert!(stored.adaptation_state.trait_overrides.verbosity >= -0.04);
+        assert!(
+            stored
+                .adaptation_state
+                .notes
+                .iter()
+                .any(|note| note.contains("user preferred concise responses"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_interaction_record_is_idempotent() -> Result<(), Box<dyn Error>> {
+        let conn = Connection::open_in_memory()?;
+        initialize_database(&conn)?;
+
+        let mut config = sample_config();
+        config.adaptation.min_interactions_for_adapt = 1;
+
+        let request = InteractionRecordRequest {
+            event_id: "evt-dup".to_owned(),
+            event: InteractionEvent {
+                agent_id: "agent.alpha".to_owned(),
+                session_id: Some("session.alpha".to_owned()),
+                interaction_type: "review".to_owned(),
+                outcome: InteractionOutcome::Positive,
+                signals: vec![InteractionSignal::Trait(TraitSignal {
+                    trait_name: crate::domain::interactions::AdaptiveTrait::Warmth,
+                    direction: SignalDirection::Increase,
+                    strength: 1.0,
+                    reason: "collaboration went smoothly".to_owned(),
+                })],
+                notes: None,
+                recorded_at: test_timestamp(2026, 3, 29, 2, 5, 0)?,
+            },
+            context_json: r#"{"surface":"mcp"}"#.to_owned(),
+            persist: true,
+        };
+
+        let first = record_interaction(&conn, &config, &request)?;
+        let duplicate = record_interaction(&conn, &config, &request)?;
+
+        assert_eq!(first.effect, InteractionRecordEffect::Inserted);
+        assert_eq!(duplicate.effect, InteractionRecordEffect::Duplicate);
         Ok(())
     }
 
