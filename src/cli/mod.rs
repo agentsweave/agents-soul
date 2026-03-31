@@ -7,7 +7,7 @@ pub mod reset;
 
 use std::{ffi::OsString, io};
 
-use clap::{error::ErrorKind, Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use serde::Serialize;
 
 use crate::{

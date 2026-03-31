@@ -10,6 +10,8 @@ These examples are intentionally aligned to the current loader contract in
   style, heuristics, limits, templates, sources, and adaptation
 - `degraded/soul.toml`: explicit degraded/offline-safe posture using
   `offline_registry_behavior = "baseline-only"` and adaptation disabled
+- `overlayed/`: canonical `soul.toml` plus `soul.d/*.toml` overlays showing
+  operator-managed adaptation policy and style overrides
 
 ## Required Workspace Files
 
@@ -20,6 +22,9 @@ also requires:
 - `.soul/adaptation_log.jsonl`
 
 `.soul/context_cache.json` is optional and disposable.
+
+If `soul.d/` exists, every non-hidden `*.toml` file is merged in sorted filename
+order after `soul.toml` loads. Later files win for conflicting scalars.
 
 ## Bootstrap From An Example
 
@@ -41,8 +46,18 @@ initialize the schema on first write.
   at load finalization time.
 - Config persistence currently rewrites the full file in canonical TOML and
   does not preserve comments or original table layout.
+- `configure_workspace` and `update_traits` rewrite only the canonical
+  `soul.toml`. Existing `soul.d/*.toml` files are preserved as manual overlays
+  and continue to apply on subsequent loads.
+- Put stable workspace identity in `soul.toml`. Use `soul.d/*.toml` for
+  operator-local policy overrides such as adaptation thresholds, communication
+  style tweaks, or environment-specific registry endpoints.
 - There is no separate `revoked/` workspace example because fail-closed mode is
   driven by upstream registry verification state, not by a local workspace flag.
+- Throttled adaptive writes stay visible through `record_interaction` responses:
+  when a write lands inside `adaptation.min_persist_interval_seconds`, the tool
+  returns `effect = "session-only"` plus the candidate state even though
+  `inspect` and `explain_report` still show the last durable state.
 
 ## Exercise The Examples
 
@@ -66,6 +81,9 @@ Recommended usage:
   limits, templates, and adaptation.
 - `degraded/` is the operator reference for offline-safe posture with
   `offline_registry_behavior = "baseline-only"` and adaptation disabled.
+- `overlayed/` demonstrates the supported split between canonical config and
+  manual overlays. Its drop-ins make adaptation react after one interaction and
+  throttle durable rewrites for fifteen minutes.
 
 ## Default Values
 
@@ -109,3 +127,4 @@ and `src/domain/limits.rs`:
   - `enabled = true`
   - `learning_window_days = 30`
   - `min_interactions_for_adapt = 5`
+  - `min_persist_interval_seconds = 300`

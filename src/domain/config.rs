@@ -191,6 +191,8 @@ pub struct AdaptationConfig {
     pub learning_window_days: u32,
     #[serde(default = "default_min_interactions_for_adapt")]
     pub min_interactions_for_adapt: u32,
+    #[serde(default = "default_min_persist_interval_seconds")]
+    pub min_persist_interval_seconds: u64,
 }
 
 impl AdaptationConfig {
@@ -215,6 +217,7 @@ impl Default for AdaptationConfig {
             enabled: default_adaptation_enabled(),
             learning_window_days: default_learning_window_days(),
             min_interactions_for_adapt: default_min_interactions_for_adapt(),
+            min_persist_interval_seconds: default_min_persist_interval_seconds(),
         }
     }
 }
@@ -245,4 +248,8 @@ const fn default_learning_window_days() -> u32 {
 
 const fn default_min_interactions_for_adapt() -> u32 {
     5
+}
+
+const fn default_min_persist_interval_seconds() -> u64 {
+    300
 }

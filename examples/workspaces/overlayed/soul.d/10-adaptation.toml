@@ -1,0 +1,3 @@
+[adaptation]
+min_interactions_for_adapt = 1
+min_persist_interval_seconds = 900

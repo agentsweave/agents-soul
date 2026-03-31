@@ -1,9 +1,9 @@
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 
 use chrono::{DateTime, Utc};
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 
 use crate::{
     adaptation::{AdaptiveResetRequest, InteractionRecordRequest},
@@ -541,11 +541,11 @@ fn read_message<R: BufRead>(reader: &mut R) -> io::Result<Option<(String, Messag
     String::from_utf8(body)
         .map(|body| Some((body, MessageMode::Framed)))
         .map_err(|error| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("invalid UTF-8 body in MCP stdio request: {error}"),
-        )
-    })
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid UTF-8 body in MCP stdio request: {error}"),
+            )
+        })
 }
 
 fn write_message<W: Write>(

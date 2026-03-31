@@ -588,6 +588,7 @@ mod tests {
             enabled: true,
             learning_window_days: 30,
             min_interactions_for_adapt: 1,
+            min_persist_interval_seconds: 300,
         };
         config.decision_heuristics = vec![DecisionHeuristic {
             heuristic_id: "review-risk".to_owned(),

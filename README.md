@@ -81,6 +81,44 @@ Operational notes:
 - `.soul/context_cache.json` may be created by compose/read paths; it can be deleted at any time because it is not authoritative.
 - The example workspaces cover config posture only. Restricted and fail-closed behavior are driven by upstream registry state, not by a local workspace toggle.
 
+## Layered Workspace Config
+
+The workspace loader reads `soul.toml` first, then merges `soul.d/*.toml` in
+sorted filename order. Later overlays win for conflicting scalar fields, so
+operators can keep one canonical workspace file and layer environment- or
+machine-local policy on top without forking the whole config.
+
+Use this split deliberately:
+
+- keep stable workspace identity and broad defaults in `soul.toml`
+- use `soul.d/*.toml` for manual overlays such as registry endpoints,
+  communication style adjustments, or adaptation thresholds
+- avoid putting the same field in multiple drop-ins unless filename ordering is
+  an intentional precedence rule
+
+Patch tooling (`configure`, `update_traits`, and the equivalent MCP tools)
+rewrites only the canonical `soul.toml`. It does not normalize or delete
+existing `soul.d/*.toml` files. Those overlays remain operator-managed and will
+still be merged after the rewritten base file loads.
+
+See `examples/workspaces/overlayed/` for a runnable overlayed workspace example.
+
+## Adaptive Persistence Throttling
+
+`adaptation.min_persist_interval_seconds` controls how often bounded adaptation
+state is durably rewritten. The default is `300` seconds. When a new adaptive
+candidate arrives inside that window:
+
+- `record_interaction` still returns the new candidate state
+- the response effect is `session-only`
+- durable workspace state is left unchanged until the interval elapses
+- `inspect` and `explain_report` continue to reflect the last durable state, but
+  now include the effective `min_interactions_for_adapt` and
+  `min_persist_interval_seconds` values so operators can see the active policy
+
+This keeps rapid bursts of evidence observable without rewriting SQLite on every
+interaction.
+
 ## Top-Level Layout
 
 - `src/app`: application wiring and runtime bootstrap

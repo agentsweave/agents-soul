@@ -118,6 +118,8 @@ pub struct InspectHeuristicEntry {
 pub struct InspectAdaptationProjection {
     pub enabled: bool,
     pub active: bool,
+    pub min_interactions_for_adapt: u32,
+    pub min_persist_interval_seconds: u64,
     pub evidence_window_size: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_updated_at: Option<DateTime<Utc>>,
@@ -473,6 +475,11 @@ fn inspect_adaptation(normalized: &NormalizedInputs) -> InspectAdaptationProject
     InspectAdaptationProjection {
         enabled: normalized.soul_config.adaptation.enabled,
         active,
+        min_interactions_for_adapt: normalized.soul_config.adaptation.min_interactions_for_adapt,
+        min_persist_interval_seconds: normalized
+            .soul_config
+            .adaptation
+            .min_persist_interval_seconds,
         evidence_window_size: adaptation.evidence_window_size,
         last_updated_at: adaptation.last_updated_at,
         notes: adaptation.notes.clone(),
@@ -1710,6 +1717,8 @@ mod tests {
         );
 
         assert!(report.adaptation.active);
+        assert_eq!(report.adaptation.min_interactions_for_adapt, 1);
+        assert_eq!(report.adaptation.min_persist_interval_seconds, 300);
         assert_eq!(report.heuristics_only(), report.heuristics);
         assert!(
             report

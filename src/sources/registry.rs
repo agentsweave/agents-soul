@@ -452,10 +452,12 @@ struct RegistryCategoryCompat {
 
 impl RegistryVerificationCompat {
     fn into_soul_verification(self) -> Result<RegistryStanding, SoulError> {
-        let status = self.official_status.ok_or_else(|| SoulError::UpstreamInvalid {
-            input: "agents-registry-standing",
-            message: "verification payload is missing `official_status`".into(),
-        })?;
+        let status = self
+            .official_status
+            .ok_or_else(|| SoulError::UpstreamInvalid {
+                input: "agents-registry-standing",
+                message: "verification payload is missing `official_status`".into(),
+            })?;
         Ok(RegistryStanding {
             status,
             standing_level: self.public_standing,
@@ -466,10 +468,12 @@ impl RegistryVerificationCompat {
 
     fn into_soul_snapshot(self) -> Result<RegistrySnapshot, SoulError> {
         let standing = RegistryStanding {
-            status: self.official_status.ok_or_else(|| SoulError::UpstreamInvalid {
-                input: "agents-registry-standing",
-                message: "verification payload is missing `official_status`".into(),
-            })?,
+            status: self
+                .official_status
+                .ok_or_else(|| SoulError::UpstreamInvalid {
+                    input: "agents-registry-standing",
+                    message: "verification payload is missing `official_status`".into(),
+                })?,
             standing_level: self.public_standing,
             reason_code: self.reason_code,
             verified_at: parse_optional_timestamp("agents-registry-standing", self.verified_at)?,
@@ -512,7 +516,9 @@ impl RegistryAuthorityCompat {
 impl RegistryReputationCompat {
     fn into_soul_reputation(self) -> Result<RegistryReputation, SoulError> {
         let mut context = Vec::new();
-        if let Some(public_standing) = self.public_standing.filter(|value| !value.trim().is_empty())
+        if let Some(public_standing) = self
+            .public_standing
+            .filter(|value| !value.trim().is_empty())
         {
             context.push(format!("public standing: {public_standing}"));
         }
@@ -526,7 +532,10 @@ impl RegistryReputationCompat {
         Ok(RegistryReputation {
             score_total: self.score_total,
             score_recent_30d: self.score_recent_30d,
-            last_event_at: parse_optional_timestamp("agents-registry-reputation", self.last_event_at)?,
+            last_event_at: parse_optional_timestamp(
+                "agents-registry-reputation",
+                self.last_event_at,
+            )?,
             context,
         })
     }

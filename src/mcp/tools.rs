@@ -5,15 +5,15 @@ use crate::{
     },
     app::{
         deps::SoulDependencies,
-        errors::{map_soul_error, SoulMcpToolError, SoulTransportError},
+        errors::{SoulMcpToolError, SoulTransportError, map_soul_error},
     },
     domain::{
         BehavioralContext, ComposeRequest, PersonalityProfilePatch, SoulConfig, SoulConfigPatch,
         SoulError,
     },
     services::{
-        explain::{ExplainReport, InspectHeuristicProjection, InspectTraitProjection},
         ServiceError,
+        explain::{ExplainReport, InspectHeuristicProjection, InspectTraitProjection},
     },
 };
 use serde::{Deserialize, Serialize};

@@ -28,9 +28,7 @@ fn readers_accept_upstream_identify_and_registry_payloads() -> Result<(), Box<dy
     assert_eq!(signals.recovery_state, Some(snapshot.recovery_state));
     assert_eq!(
         snapshot.fingerprint.as_deref(),
-        Some(
-            "4be6a963f71ee21ea4c18746c2c68ac03dd1af5736c3a3749afd179ade4f5393"
-        )
+        Some("4be6a963f71ee21ea4c18746c2c68ac03dd1af5736c3a3749afd179ade4f5393")
     );
 
     let registry = RegistryReader::default();
@@ -56,20 +54,25 @@ fn compose_context_accepts_real_upstream_fixture_shapes() -> Result<(), Box<dyn 
         workspace.join("soul.toml"),
         HEALTHY_SOUL_CONFIG.replace("agent.alpha", "agent-alpha"),
     )?;
-    fs::write(workspace.join("agents_identify.json"), IDENTIFY_EXPORT_FIXTURE)?;
-    fs::write(workspace.join("agents_registry.json"), REGISTRY_AUTHORITY_FIXTURE)?;
+    fs::write(
+        workspace.join("agents_identify.json"),
+        IDENTIFY_EXPORT_FIXTURE,
+    )?;
+    fs::write(
+        workspace.join("agents_registry.json"),
+        REGISTRY_AUTHORITY_FIXTURE,
+    )?;
 
     let mut request = ComposeRequest::new("agent-alpha", "session-upstream");
     request.workspace_id = workspace.display().to_string();
-    request.identity_snapshot_path = Some(
-        workspace
-            .join("agents_identify.json")
-            .display()
-            .to_string(),
-    );
+    request.identity_snapshot_path =
+        Some(workspace.join("agents_identify.json").display().to_string());
 
     let context = AppDeps::default().compose_context(request)?;
-    assert_eq!(context.status_summary.compose_mode, agents_soul::ComposeMode::Restricted);
+    assert_eq!(
+        context.status_summary.compose_mode,
+        agents_soul::ComposeMode::Restricted
+    );
     assert_eq!(
         context.status_summary.registry_status,
         Some(RegistryStatus::Suspended)

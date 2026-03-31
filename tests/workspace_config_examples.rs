@@ -1,6 +1,9 @@
 use std::{error::Error, fs, path::PathBuf};
 
-use agents_soul::domain::{OfflineRegistryBehavior, SoulConfig};
+use agents_soul::{
+    app::config::load_soul_config,
+    domain::{OfflineRegistryBehavior, SoulConfig},
+};
 
 #[test]
 fn minimal_workspace_example_loads_and_applies_registry_agent_default() -> Result<(), Box<dyn Error>>
@@ -28,6 +31,20 @@ fn degraded_workspace_example_sets_baseline_only_offline_behavior() -> Result<()
         OfflineRegistryBehavior::BaselineOnly
     );
     assert!(!config.adaptation.enabled);
+    Ok(())
+}
+
+#[test]
+fn overlayed_workspace_example_merges_dropins_into_effective_config() -> Result<(), Box<dyn Error>>
+{
+    let config = load_soul_config(workspace_examples_root().join("overlayed"))?;
+    assert_eq!(config.profile_name, "Overlayed Alpha");
+    assert_eq!(config.adaptation.min_interactions_for_adapt, 1);
+    assert_eq!(config.adaptation.min_persist_interval_seconds, 900);
+    assert_eq!(
+        format!("{:?}", config.communication_style.default_register).to_lowercase(),
+        "advisory"
+    );
     Ok(())
 }
 

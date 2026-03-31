@@ -342,6 +342,16 @@ pub fn persist_adaptation_write(
         });
     }
 
+    if existing
+        .as_ref()
+        .is_some_and(|stored| persist_write_is_throttled(config, stored, &candidate))
+    {
+        return Ok(AdaptiveWriteResult {
+            effect: AdaptiveWriteEffect::SessionOnly,
+            stored_state: Some(candidate),
+        });
+    }
+
     sqlite::upsert_adaptation_state(conn, &candidate.to_record()?)?;
 
     Ok(AdaptiveWriteResult {
@@ -422,6 +432,24 @@ pub fn record_workspace_interaction(
     let db_path = WorkspacePaths::new(workspace_root.as_ref().to_path_buf()).adaptation_db_path();
     let conn = sqlite::open_database(db_path)?;
     record_interaction(&conn, config, request)
+}
+
+fn persist_write_is_throttled(
+    config: &SoulConfig,
+    existing: &StoredAdaptationState,
+    candidate: &StoredAdaptationState,
+) -> bool {
+    let min_interval = config.adaptation.min_persist_interval_seconds;
+    if min_interval == 0 {
+        return candidate.updated_at <= existing.updated_at;
+    }
+
+    let elapsed = candidate.updated_at - existing.updated_at;
+    if elapsed.num_seconds() <= 0 {
+        return true;
+    }
+
+    (elapsed.num_seconds() as u64) < min_interval
 }
 
 fn normalize_notes(mut notes: Vec<String>) -> Vec<String> {
@@ -605,6 +633,45 @@ mod tests {
         assert_eq!(stored.updated_at, second.updated_at);
         assert_eq!(stored.interaction_count, 12);
         assert_eq!(stored.adaptation_state.notes, vec!["New signal".to_owned()]);
+        Ok(())
+    }
+
+    #[test]
+    fn throttled_persist_returns_session_candidate_without_overwriting_storage()
+    -> Result<(), Box<dyn Error>> {
+        let conn = Connection::open_in_memory()?;
+        initialize_database(&conn)?;
+
+        let mut config = sample_config();
+        config.adaptation.min_persist_interval_seconds = 900;
+
+        let first = sample_write(true, 0)?;
+        let second = AdaptiveWriteRequest {
+            updated_at: test_timestamp(2026, 3, 29, 1, 5, 0)?,
+            notes: vec!["Fresh session-only signal".to_owned()],
+            ..sample_write(true, 5)?
+        };
+
+        let inserted = persist_adaptation_write(&conn, &config, &first)?;
+        let throttled = persist_adaptation_write(&conn, &config, &second)?;
+        let stored = load_stored_adaptation_state(&conn, "agent.alpha")?
+            .ok_or_else(|| io::Error::other("missing stored adaptation state"))?;
+
+        assert_eq!(inserted.effect, AdaptiveWriteEffect::Inserted);
+        assert_eq!(throttled.effect, AdaptiveWriteEffect::SessionOnly);
+        assert_eq!(stored.updated_at, first.updated_at);
+        assert_eq!(
+            stored.adaptation_state.notes,
+            vec!["Keep answers short".to_owned()]
+        );
+        assert_eq!(
+            throttled
+                .stored_state
+                .ok_or_else(|| io::Error::other("missing session candidate"))?
+                .adaptation_state
+                .notes,
+            vec!["Fresh session-only signal".to_owned()]
+        );
         Ok(())
     }
 

@@ -1,0 +1,10 @@
+schema_version = 1
+agent_id = "agent.alpha"
+profile_name = "Overlayed Alpha"
+
+[sources]
+identity_workspace = "/tmp/overlayed-identity"
+registry_url = "http://127.0.0.1:7700"
+
+[adaptation]
+learning_window_days = 30

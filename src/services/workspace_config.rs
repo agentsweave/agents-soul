@@ -138,7 +138,7 @@ mod tests {
     use std::{env, fs, path::PathBuf};
 
     use crate::{
-        app::config::load_soul_config,
+        app::config::{WorkspacePaths, load_soul_config},
         domain::{
             CommunicationStylePatch, ConflictStyle, DecisionHeuristic, DecisionHeuristicPatch,
             ParagraphBudget, PersonalityProfilePatch, QuestionStyle, RegisterStyle, SoulConfig,
@@ -287,6 +287,57 @@ mod tests {
         let loaded = load_soul_config(&workspace)?;
         assert_eq!(loaded, sample_config());
 
+        Ok(())
+    }
+
+    #[test]
+    fn patch_workspace_rewrites_canonical_base_without_touching_dropins()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = temp_workspace("patch-preserves-dropins");
+        fs::create_dir_all(&workspace)?;
+        let paths = WorkspacePaths::new(&workspace);
+        fs::create_dir_all(paths.config_dropin_dir())?;
+        fs::write(
+            paths.config_path(),
+            toml::to_string_pretty(&sample_config())?,
+        )?;
+        fs::write(
+            paths.config_dropin_dir().join("20-style.toml"),
+            r#"
+[communication_style]
+default_register = "advisory"
+
+[adaptation]
+min_persist_interval_seconds = 900
+"#,
+        )?;
+
+        let updated = WorkspaceConfigService.patch_workspace(
+            &workspace,
+            &SoulConfigPatch {
+                trait_baseline: PersonalityProfilePatch {
+                    verbosity: Some(0.82),
+                    ..PersonalityProfilePatch::default()
+                },
+                ..SoulConfigPatch::default()
+            },
+        )?;
+        let dropin = fs::read_to_string(paths.config_dropin_dir().join("20-style.toml"))?;
+        let reloaded = load_soul_config(&workspace)?;
+
+        assert!(dropin.contains("default_register = \"advisory\""));
+        assert!(dropin.contains("min_persist_interval_seconds = 900"));
+        assert_eq!(updated.trait_baseline.verbosity, 0.82);
+        assert_eq!(reloaded.trait_baseline.verbosity, 0.82);
+        assert_eq!(
+            format!("{:?}", reloaded.communication_style.default_register).to_lowercase(),
+            "advisory"
+        );
+        assert_eq!(reloaded.adaptation.min_persist_interval_seconds, 900);
+
+        if workspace.exists() {
+            fs::remove_dir_all(&workspace)?;
+        }
         Ok(())
     }
 
