@@ -247,7 +247,9 @@ detect_hosts() {
   [[ -e "$HOME/.opencode.json" ]] && hosts+=("opencode")
   [[ -d "$HOME/.config/amp" ]] && hosts+=("amp")
   [[ -d "$HOME/.factory" ]] && hosts+=("droid")
-  printf '%s\n' "${hosts[@]}"
+  if [[ "${#hosts[@]}" -gt 0 ]]; then
+    printf '%s\n' "${hosts[@]}"
+  fi
 }
 
 mapfile -t HOSTS < <(detect_hosts)
